@@ -1,0 +1,75 @@
+import { apiClient, unwrap } from './client';
+
+export type Citation = {
+  chunk_id: string;
+  document_id: string;
+  file_name: string;
+  page_number?: number;
+  sheet_name?: string;
+  heading_path?: string;
+  quote: string;
+  score: number;
+};
+
+export type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations: Citation[];
+  attachments?: TempFile[];
+  created_at: string;
+};
+
+export type TempFile = {
+  id: string;
+  file_name: string;
+  status: string;
+  error_message?: string;
+  expires_at?: string;
+};
+
+export type Conversation = {
+  id: string;
+  title: string;
+  mode: string;
+  created_at: string;
+  updated_at: string;
+  messages?: ChatMessage[];
+  temp_files?: TempFile[];
+};
+
+export function createConversation(title?: string) {
+  return unwrap<Conversation>(apiClient.post('/chat/conversations', { title }));
+}
+
+export function fetchConversations() {
+  return unwrap<Conversation[]>(apiClient.get('/chat/conversations'));
+}
+
+export function fetchConversation(conversationId: string) {
+  return unwrap<Conversation>(apiClient.get(`/chat/conversations/${conversationId}`));
+}
+
+export function sendMessage(conversationId: string, content: string, kbIds: string[] = []) {
+  return unwrap<{ user_message?: ChatMessage; message: ChatMessage }>(
+    apiClient.post(`/chat/conversations/${conversationId}/messages`, {
+      content,
+      kb_id: kbIds[0],
+      kb_ids: kbIds,
+    }),
+  );
+}
+
+export function uploadTempFile(conversationId: string, formData: FormData) {
+  return unwrap<TempFile>(
+    apiClient.post(`/chat/conversations/${conversationId}/temp-files`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  );
+}
+
+export function sendFeedback(messageId: string, feedbackType: string, detail?: string) {
+  return unwrap<Record<string, unknown>>(
+    apiClient.post('/chat/feedback', { message_id: messageId, feedback_type: feedbackType, detail }),
+  );
+}
