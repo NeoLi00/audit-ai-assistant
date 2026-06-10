@@ -20,7 +20,9 @@ export default function AppLayout() {
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
   const location = useLocation();
-  const title = PAGE_TITLES[`/${location.pathname.split('/')[1]}`] || PAGE_TITLES[location.pathname] || '审计 AI 助手';
+  const routeRoot = `/${location.pathname.split('/')[1]}`;
+  const title = PAGE_TITLES[routeRoot] || PAGE_TITLES[location.pathname] || '审计 AI 助手';
+  const isWorkspaceRoute = routeRoot === '/' || routeRoot === '/chat';
 
   useEffect(() => {
     const token = localStorage.getItem('audit_ai_token');
@@ -72,8 +74,8 @@ export default function AppLayout() {
   return (
     <Layout className="app-shell">
       <Sidebar user={user} />
-      <Layout className="main-shell">
-        <header className="topbar">
+      <Layout className={`main-shell ${isWorkspaceRoute ? 'workspace-route' : ''}`}>
+        <header className={`topbar ${isWorkspaceRoute ? 'workspace-topbar' : ''}`}>
           <div>
             <Typography.Title level={4} className="page-title">
               {title}

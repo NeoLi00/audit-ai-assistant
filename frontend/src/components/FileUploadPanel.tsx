@@ -43,7 +43,7 @@ export default function FileUploadPanel({ open, conversationId, onClose, onUploa
 
   return (
     <Modal title="临时上传文件" open={open} onCancel={onClose} onOk={submit} confirmLoading={submitting}>
-      <Space direction="vertical" className="full-width">
+      <Space orientation="vertical" className="full-width">
         <Upload
           multiple
           maxCount={5}

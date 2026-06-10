@@ -49,7 +49,7 @@ export default function ChatInput({
             submit();
           }
         }}
-        autoSize={{ minRows: 2, maxRows: 5 }}
+        autoSize={{ minRows: 1, maxRows: 5 }}
         placeholder={placeholder}
       />
       <Tooltip title="发送">

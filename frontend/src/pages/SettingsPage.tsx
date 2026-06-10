@@ -66,9 +66,9 @@ export default function SettingsPage() {
   }, [refreshStatus, runtimeConfig.local_e5?.status]);
 
   return (
-    <Space direction="vertical" className="full-width" size={16}>
+    <Space orientation="vertical" className="full-width" size={16}>
       <Card title="模型服务">
-        <Space direction="vertical">
+        <Space orientation="vertical">
           <ModelStatusBadge />
           <Typography.Text type="secondary">
             这里配置本地部署模型的 OpenAI-compatible 服务地址。点击配置时会实际调用模型接口验证，不通过不会保存。
@@ -114,7 +114,7 @@ export default function SettingsPage() {
           >
             <Input placeholder="local-chat-model" autoComplete="off" />
           </Form.Item>
-          <Space direction="vertical">
+          <Space orientation="vertical">
             <Button type="primary" icon={<ApiOutlined />} htmlType="submit" loading={llmSaving}>
               验证并配置 LLM
             </Button>
@@ -158,7 +158,7 @@ export default function SettingsPage() {
           <Form.Item name="model" label="模型名称">
             <Input placeholder="deepseek-chat" autoComplete="off" />
           </Form.Item>
-          <Space direction="vertical">
+          <Space orientation="vertical">
             <Button type="primary" icon={<ApiOutlined />} htmlType="submit" loading={deepSeekSaving}>
               验证并配置 DeepSeek
             </Button>
@@ -216,7 +216,7 @@ export default function SettingsPage() {
           <Form.Item name="api_key" label="Embedding API Key">
             <Input.Password placeholder="本地服务不需要 key 时可留空" autoComplete="off" />
           </Form.Item>
-          <Space direction="vertical">
+          <Space orientation="vertical">
             <Button type="primary" icon={<CloudSyncOutlined />} htmlType="submit" loading={embeddingSaving}>
               验证并配置 Embedding
             </Button>
@@ -233,7 +233,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card title="本地 multilingual-e5-small">
-        <Space direction="vertical" className="full-width">
+        <Space orientation="vertical" className="full-width">
           <Typography.Text type="secondary">
             在当前后端虚拟环境里启动本地 embedding 测试服务，冷启动完成后会自动切换为可测试状态。
           </Typography.Text>
@@ -262,7 +262,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card title="当前状态">
-        <Space direction="vertical" className="full-width">
+        <Space orientation="vertical" className="full-width">
           <Button icon={<ReloadOutlined />} onClick={() => refreshStatus().catch(() => message.error('刷新失败'))}>
             刷新状态
           </Button>
@@ -292,7 +292,7 @@ function LocalE5Status({ status }: { status?: RuntimeModelConfig['local_e5'] }) 
   }
   const color = status.status === 'ready' ? 'green' : status.status === 'failed' ? 'red' : 'blue';
   return (
-    <Space direction="vertical" size={4}>
+    <Space orientation="vertical" size={4}>
       <Tag color={color}>{status.message || status.status}</Tag>
       {status.status === 'ready' ? (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -336,7 +336,7 @@ function ServiceValidationStatus({
     );
   }
   return (
-    <Space direction="vertical" size={4}>
+    <Space orientation="vertical" size={4}>
       <Space wrap>
         <Tag icon={<CheckCircleOutlined />} color={validation?.status === 'ok' ? 'green' : 'blue'}>
           {validation?.message || '已配置'}

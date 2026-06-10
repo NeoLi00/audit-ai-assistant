@@ -19,7 +19,7 @@ export default function CitationCard({ citation }: CitationCardProps) {
       hoverable
       onClick={() => navigate(`/documents/${citation.document_id}?chunkId=${citation.chunk_id}`)}
     >
-      <Space direction="vertical" size={4}>
+      <Space orientation="vertical" size={4}>
         <Space>
           <FileSearchOutlined />
           <Typography.Text strong>{citation.file_name || '未知文件'}</Typography.Text>

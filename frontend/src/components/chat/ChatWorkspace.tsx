@@ -5,18 +5,15 @@ import {
   DislikeOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
-  FileSearchOutlined,
   LikeOutlined,
   LoadingOutlined,
-  MessageOutlined,
   PaperClipOutlined,
   PlusOutlined,
   ReloadOutlined,
-  UserOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import { Button, Empty, Input, message, Modal, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   createConversation,
@@ -306,18 +303,21 @@ export default function ChatWorkspace() {
     }
   };
 
+  const hasMessages = messages.length > 0;
+
   return (
     <div className="chat-workspace">
       <aside className="workspace-rail" aria-label="会话列表">
         <div className="workspace-rail-head">
           <div>
-            <Typography.Text className="workspace-kicker">会话</Typography.Text>
             <Typography.Title level={5} className="workspace-panel-title">
-              审计问答
+              审计 AI 助手
             </Typography.Title>
           </div>
           <Tooltip title="新建对话">
-            <Button type="primary" shape="circle" icon={<PlusOutlined />} onClick={createNewConversation} />
+            <Button className="workspace-new-chat" type="text" icon={<PlusOutlined />} onClick={createNewConversation}>
+              新对话
+            </Button>
           </Tooltip>
         </div>
         <div className="conversation-stack" role="list">
@@ -394,10 +394,9 @@ export default function ChatWorkspace() {
         </div>
       </aside>
 
-      <section className="workspace-chat" aria-label="审计 AI 工作台">
+      <section className={`workspace-chat ${hasMessages ? 'has-messages' : 'empty'}`} aria-label="审计 AI 工作台">
         <header className="workspace-chat-head">
           <div className="workspace-title-block">
-            <Typography.Text className="workspace-kicker">工作台</Typography.Text>
             <Typography.Title level={3} className="workspace-title">
               {active?.title || '审计 AI 助手'}
             </Typography.Title>
@@ -411,22 +410,17 @@ export default function ChatWorkspace() {
         </header>
 
         <div className="message-list workspace-message-list">
-          {!messages.length && (
+          {!hasMessages && (
             <div className="workspace-empty">
-              <FileSearchOutlined />
-              <Typography.Title level={4}>开始一次审计问答</Typography.Title>
+              <Typography.Title level={2}>今天要审计什么？</Typography.Title>
               <Typography.Text type="secondary">
-                选择知识库或上传本轮附件后提问，回答会基于当前材料生成。
+                选择知识库、上传材料，或直接输入问题。
               </Typography.Text>
             </div>
           )}
           {messages.map((item) => (
             <article key={item.id} className={`message-bubble ${item.role}`}>
-              <div className="message-meta">
-                <span className="message-avatar">{item.role === 'user' ? <UserOutlined /> : <MessageOutlined />}</span>
-                <Typography.Text strong>{item.role === 'user' ? '我' : '审计 AI 助手'}</Typography.Text>
-              </div>
-              <Typography.Paragraph className="markdown-text">{item.content}</Typography.Paragraph>
+              <MessageText content={item.content} />
               {item.attachments && item.attachments.length > 0 && (
                 <div className="message-attachment-list">
                   {item.attachments.map((file) => (
@@ -506,6 +500,33 @@ export default function ChatWorkspace() {
       />
     </div>
   );
+}
+
+function MessageText({ content }: { content: string }) {
+  const blocks = content.split(/\n{2,}/).filter((block) => block.length > 0);
+  return (
+    <div className="markdown-text">
+      {blocks.map((block, blockIndex) => (
+        <p key={`${blockIndex}-${block.slice(0, 12)}`}>
+          {block.split('\n').map((line, lineIndex) => (
+            <Fragment key={`${lineIndex}-${line.slice(0, 12)}`}>
+              {lineIndex > 0 ? <br /> : null}
+              {renderInlineMarkdown(line)}
+            </Fragment>
+          ))}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function renderInlineMarkdown(line: string) {
+  return line.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${index}-${part}`}>{part.slice(2, -2)}</strong>;
+    }
+    return <Fragment key={`${index}-${part}`}>{part}</Fragment>;
+  });
 }
 
 function parseKbIds(rawKbIds: string | null, fallbackKbId?: string): string[] {

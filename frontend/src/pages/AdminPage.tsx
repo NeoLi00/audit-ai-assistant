@@ -48,7 +48,7 @@ export default function AdminPage() {
             key: 'users',
             label: '用户列表',
             children: (
-              <Space direction="vertical" className="full-width">
+              <Space orientation="vertical" className="full-width">
                 <Button type="primary" onClick={() => setCreateOpen(true)}>
                   新建账号
                 </Button>
@@ -124,7 +124,7 @@ export default function AdminPage() {
             key: 'database',
             label: '数据库管理',
             children: (
-              <Space direction="vertical" className="full-width">
+              <Space orientation="vertical" className="full-width">
                 <Space wrap>
                   <Button icon={<ReloadOutlined />} onClick={loadDatabase}>
                     刷新
@@ -169,7 +169,7 @@ export default function AdminPage() {
             key: 'retrieval',
             label: '检索测试',
             children: (
-              <Space direction="vertical" className="full-width">
+              <Space orientation="vertical" className="full-width">
                 <Form
                   form={retrievalForm}
                   layout="inline"
@@ -216,7 +216,7 @@ export default function AdminPage() {
                 </Form>
 
                 {retrievalResult ? (
-                  <Space direction="vertical" className="full-width">
+                  <Space orientation="vertical" className="full-width">
                     <Descriptions column={2} bordered size="small">
                       <Descriptions.Item label="问题">{retrievalResult.query}</Descriptions.Item>
                       <Descriptions.Item label="命中数">{retrievalResult.evidence.length}</Descriptions.Item>

@@ -54,7 +54,7 @@ export default function DocumentDetailPage() {
   return (
     <div className="document-detail">
       <Card>
-        <Space direction="vertical" className="full-width">
+        <Space orientation="vertical" className="full-width">
           <Space className="full-width" style={{ justifyContent: 'space-between' }}>
             <Typography.Title level={5} style={{ margin: 0 }}>
               {document.file_name}
@@ -122,7 +122,7 @@ export default function DocumentDetailPage() {
         </Card>
       )}
       <Card title="原文预览">
-        <Space direction="vertical" className="full-width">
+        <Space orientation="vertical" className="full-width">
           {blocks.map((block) => (
             <div key={block.id} className="document-block">
               <Space wrap>
@@ -138,7 +138,7 @@ export default function DocumentDetailPage() {
       </Card>
       {document.status === 'need_review' && (
         <Card title="OCR 人工校对">
-          <Space direction="vertical" className="full-width">
+          <Space orientation="vertical" className="full-width">
             <Input.TextArea
               value={correction}
               onChange={(event) => setCorrection(event.target.value)}
