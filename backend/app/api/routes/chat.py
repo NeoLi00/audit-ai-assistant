@@ -138,7 +138,7 @@ async def upload_temp_file(
     object_key, local_path = await ObjectStorage(settings).save_upload(file, prefix="temp-files")
     if local_path.stat().st_size > settings.max_upload_bytes:
         local_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="单文件大小不能超过50MB")
+        raise HTTPException(status_code=400, detail=f"单文件大小不能超过{settings.max_upload_mb}MB")
 
     temp_file = TempFile(
         conversation_id=conversation_id,

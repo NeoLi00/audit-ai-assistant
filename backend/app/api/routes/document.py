@@ -53,7 +53,7 @@ async def upload_document(
     size = local_path.stat().st_size
     if size > settings.max_upload_bytes:
         local_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="单文件大小不能超过50MB")
+        raise HTTPException(status_code=400, detail=f"单文件大小不能超过{settings.max_upload_mb}MB")
     document = Document(
         kb_id=kb_id,
         file_name=file.filename or local_path.name,

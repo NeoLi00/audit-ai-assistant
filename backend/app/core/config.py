@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     local_e5_host: str = "127.0.0.1"
     local_e5_port: int = 18080
 
-    max_upload_mb: int = 50
+    max_upload_mb: int = 300
     temp_file_ttl_hours: int = 24
     context_recent_turns: int = 6
     context_max_chars: int = 24000

@@ -111,7 +111,7 @@ export default function UploadModal({
             <InboxOutlined />
           </p>
           <p>拖拽文件到此处，或点击选择文件</p>
-          <p className="ant-upload-hint">支持 Word、Excel、PDF、png、jpg、jpeg、tiff，单文件最大 50MB</p>
+          <p className="ant-upload-hint">支持 Word、Excel、PDF、png、jpg、jpeg、tiff，单文件最大 300MB</p>
         </Upload.Dragger>
       </Form>
     </Modal>
