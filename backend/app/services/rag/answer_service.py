@@ -13,6 +13,7 @@ async def answer_question(
     question: str,
     kb_id: str | None = None,
     kb_ids: list[str] | None = None,
+    document_ids: list[str] | None = None,
     mode: str = "normal",
     uploaded_files: list[dict] | None = None,
     conversation_id: str | None = None,
@@ -20,7 +21,14 @@ async def answer_question(
     settings: Settings | None = None,
     current_user: User | None = None,
 ) -> dict:
-    evidence = await retrieve_evidence(db, question, kb_id=kb_id, kb_ids=kb_ids, current_user=current_user)
+    evidence = await retrieve_evidence(
+        db,
+        question,
+        kb_id=kb_id,
+        kb_ids=kb_ids,
+        document_ids=document_ids,
+        current_user=current_user,
+    )
     messages = ChatContextManager(settings).build_messages(
         db,
         conversation_id=conversation_id,

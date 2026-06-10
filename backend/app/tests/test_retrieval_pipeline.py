@@ -169,6 +169,60 @@ async def test_retrieve_evidence_accepts_multiple_knowledge_bases(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_retrieve_evidence_filters_to_explicit_document_ids(monkeypatch):
+    db = _session()
+    kb = KnowledgeBase(id="kb-scope", name="范围库", category="范围库", visibility="shared")
+    selected_doc = Document(
+        id="doc-selected",
+        kb_id=kb.id,
+        file_name="指定文件.docx",
+        file_ext="docx",
+        sha256="a",
+        status="indexed",
+        visibility="shared",
+    )
+    other_doc = Document(
+        id="doc-other",
+        kb_id=kb.id,
+        file_name="同库其他文件.docx",
+        file_ext="docx",
+        sha256="b",
+        status="indexed",
+        visibility="shared",
+    )
+    selected_chunk = DocumentChunk(
+        id="chunk-selected",
+        document_id=selected_doc.id,
+        kb_id=kb.id,
+        text="指定文件材料：合同付款条件为验收后支付。",
+    )
+    other_chunk = DocumentChunk(
+        id="chunk-other",
+        document_id=other_doc.id,
+        kb_id=kb.id,
+        text="同库其他文件材料：这个片段向量分数更高，不能被召回。",
+    )
+    db.add_all([kb, selected_doc, other_doc, selected_chunk, other_chunk])
+    db.commit()
+
+    indexer = VectorIndexer()
+    indexer.upsert([[0.4, 0.0], [1.0, 0.0]], [selected_chunk, other_chunk])
+    monkeypatch.setattr(retriever, "vector_indexer", indexer)
+    monkeypatch.setattr(retriever, "get_embedding_client", lambda: FakeEmbeddingClient())
+
+    evidence = await retriever.retrieve_evidence(
+        db,
+        "合同付款条件",
+        kb_ids=[kb.id],
+        document_ids=[selected_doc.id],
+        top_k=5,
+    )
+
+    assert [item["chunk_id"] for item in evidence] == ["chunk-selected"]
+    assert evidence[0]["file_name"] == "指定文件.docx"
+
+
+@pytest.mark.asyncio
 async def test_retrieve_evidence_rejects_invisible_explicit_private_kb(monkeypatch):
     db = _session()
     user = User(id="u1", username="auditor", password_hash="x", role="auditor", display_name="审计人员")

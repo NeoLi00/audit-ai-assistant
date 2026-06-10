@@ -8,7 +8,7 @@ from app.api.routes.auth import get_current_user
 from app.core.config import get_settings
 from app.db.models import Conversation, Message, TempFile, User
 from app.db.session import get_db
-from app.schemas.chat import ChatMessageCreate, ConversationCreate, FeedbackCreate
+from app.schemas.chat import ChatMessageCreate, ConversationCreate, ConversationUpdate, FeedbackCreate
 from app.schemas.common import ok
 from app.services.audit.audit_logger import log_action, text_digest
 from app.services.chat_context.context_manager import ChatContextManager
@@ -27,7 +27,13 @@ def create_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    conversation = Conversation(user_id=current_user.id, title=payload.title or "新会话", mode="normal")
+    metadata = _conversation_scope_metadata(payload.kb_ids, payload.document_ids, payload.scope_label)
+    conversation = Conversation(
+        user_id=current_user.id,
+        title=payload.title or "新会话",
+        mode="normal",
+        metadata_json=metadata,
+    )
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
@@ -53,9 +59,46 @@ def get_conversation(
     current_user: User = Depends(get_current_user),
 ):
     conversation = db.get(Conversation, conversation_id)
-    if not conversation:
+    if not conversation or conversation.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="会话不存在")
     return ok(_conversation_dict(conversation, include_messages=True))
+
+
+@router.patch("/conversations/{conversation_id}")
+def update_conversation(
+    conversation_id: str,
+    payload: ConversationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    conversation = db.get(Conversation, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    title = _clean_title(payload.title)
+    if not title:
+        raise HTTPException(status_code=400, detail="标题不能为空")
+    conversation.title = title
+    db.commit()
+    db.refresh(conversation)
+    return ok(_conversation_dict(conversation))
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    conversation = db.get(Conversation, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    storage = ObjectStorage()
+    for temp_file in list(conversation.temp_files):
+        if temp_file.minio_object_key:
+            storage.remove(temp_file.minio_object_key)
+    db.delete(conversation)
+    db.commit()
+    return ok({"deleted": conversation_id})
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -66,7 +109,7 @@ async def create_message(
     current_user: User = Depends(get_current_user),
 ):
     conversation = db.get(Conversation, conversation_id)
-    if not conversation:
+    if not conversation or conversation.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="会话不存在")
 
     pending_files = _pending_temp_files(db, conversation_id)
@@ -74,6 +117,13 @@ async def create_message(
     if processing_files:
         raise HTTPException(status_code=400, detail="上传文件仍在解析，请等待解析完成后再提问")
     ready_files = [item for item in pending_files if item.status == "ready"]
+
+    previous_user_messages = db.query(Message).filter(
+        Message.conversation_id == conversation_id,
+        Message.role == "user",
+    ).count()
+    if previous_user_messages == 0 and _is_default_conversation_title(conversation.title):
+        conversation.title = _title_from_question(payload.content)
 
     user_message = Message(conversation_id=conversation_id, role="user", content=payload.content)
     db.add(user_message)
@@ -85,6 +135,11 @@ async def create_message(
     db.commit()
     log_action(db, "用户提问", current_user.id, "conversation", conversation_id, text_digest(payload.content))
 
+    scope = _conversation_scope(conversation)
+    effective_kb_ids = payload.kb_ids or scope.get("kb_ids", [])
+    effective_document_ids = payload.document_ids or scope.get("document_ids", [])
+    effective_kb_id = payload.kb_id or (effective_kb_ids[0] if effective_kb_ids else None)
+
     deterministic_answer = _try_temp_excel_analysis(ready_files, payload.content)
     if deterministic_answer:
         answer = deterministic_answer + "\n\n以上为 pandas 确定性计算结果，建议结合原始 Excel 核对。"
@@ -93,8 +148,9 @@ async def create_message(
         result = await answer_question(
             db,
             payload.content,
-            kb_id=payload.kb_id,
-            kb_ids=payload.kb_ids,
+            kb_id=effective_kb_id,
+            kb_ids=effective_kb_ids,
+            document_ids=effective_document_ids,
             mode="normal",
             uploaded_files=_temp_file_context(ready_files),
             conversation_id=conversation_id,
@@ -130,6 +186,9 @@ async def upload_temp_file(
     current_user: User = Depends(get_current_user),
 ):
     settings = get_settings()
+    conversation = db.get(Conversation, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
     if len(_pending_temp_files(db, conversation_id)) >= 5:
         raise HTTPException(status_code=400, detail="单次最多上传 5 个文件")
     ext = Path(file.filename or "").suffix.lower()
@@ -166,8 +225,13 @@ def delete_temp_file(
     current_user: User = Depends(get_current_user),
 ):
     temp_file = db.get(TempFile, file_id)
+    conversation = db.get(Conversation, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
     if not temp_file or temp_file.conversation_id != conversation_id:
         raise HTTPException(status_code=404, detail="临时文件不存在")
+    if (temp_file.metadata_json or {}).get("used_message_id"):
+        raise HTTPException(status_code=400, detail="已发送的附件不能从历史消息中删除")
     ObjectStorage().remove(temp_file.minio_object_key)
     db.delete(temp_file)
     db.commit()
@@ -221,10 +285,12 @@ def _try_temp_excel_analysis(files: list[TempFile], question: str) -> str | None
 
 
 def _conversation_dict(conversation: Conversation, include_messages: bool = False) -> dict:
+    scope = _conversation_scope(conversation)
     data = {
         "id": conversation.id,
         "title": conversation.title,
         "mode": conversation.mode,
+        "scope": scope,
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
     }
@@ -243,6 +309,53 @@ def _conversation_dict(conversation: Conversation, include_messages: bool = Fals
         ]
         data["temp_files"] = pending_temp_files
     return data
+
+
+def _conversation_scope_metadata(kb_ids: list[str] | None, document_ids: list[str] | None, label: str | None) -> dict:
+    clean_kb_ids = _unique_strings(kb_ids or [])
+    clean_document_ids = _unique_strings(document_ids or [])
+    clean_label = _clean_title(label or "")
+    if not clean_kb_ids and not clean_document_ids:
+        return {}
+    scope_type = "documents" if clean_document_ids else "knowledge_bases"
+    return {
+        "scope": {
+            "type": scope_type,
+            "label": clean_label,
+            "kb_ids": clean_kb_ids,
+            "document_ids": clean_document_ids,
+        }
+    }
+
+
+def _conversation_scope(conversation: Conversation) -> dict:
+    metadata = conversation.metadata_json or {}
+    scope = metadata.get("scope") if isinstance(metadata, dict) else None
+    if not isinstance(scope, dict):
+        return {}
+    return {
+        "type": str(scope.get("type") or ""),
+        "label": str(scope.get("label") or ""),
+        "kb_ids": _unique_strings(scope.get("kb_ids") or []),
+        "document_ids": _unique_strings(scope.get("document_ids") or []),
+    }
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+
+def _clean_title(value: str) -> str:
+    return " ".join(value.split()).strip()[:80]
+
+
+def _is_default_conversation_title(title: str) -> bool:
+    return title.strip() in {"", "新会话", "审计问答"}
+
+
+def _title_from_question(question: str) -> str:
+    clean = _clean_title(question)
+    return clean[:24] or "新会话"
 
 
 def _message_dict(message: Message, attachments: list[dict] | None = None) -> dict:

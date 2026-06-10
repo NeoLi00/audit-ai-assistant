@@ -66,13 +66,16 @@ class KeywordIndexer:
         db: Session,
         query: str,
         kb_id: str | None = None,
+        document_ids: list[str] | None = None,
         current_user: User | None = None,
         allowed_kb_ids: list[str] | None = None,
         top_k: int = 30,
     ) -> list[dict]:
         if allowed_kb_ids == []:
             return []
-        visible_ids = self._visible_chunk_ids(db, kb_id, current_user, allowed_kb_ids)
+        if document_ids is not None and not document_ids:
+            return []
+        visible_ids = self._visible_chunk_ids(db, kb_id, document_ids, current_user, allowed_kb_ids)
         if not visible_ids:
             return []
 
@@ -90,6 +93,7 @@ class KeywordIndexer:
         self,
         db: Session,
         kb_id: str | None,
+        document_ids: list[str] | None,
         current_user: User | None,
         allowed_kb_ids: list[str] | None,
     ) -> set[str]:
@@ -99,6 +103,10 @@ class KeywordIndexer:
             query = query.filter(Document.kb_id == kb_id)
         elif allowed_kb_ids is not None:
             query = query.filter(Document.kb_id.in_(allowed_kb_ids))
+        if document_ids is not None:
+            if not document_ids:
+                return set()
+            query = query.filter(Document.id.in_(document_ids))
         elif current_user and current_user.role != "system_admin":
             query = query.outerjoin(KnowledgeBase, KnowledgeBase.id == Document.kb_id).filter(
                 or_(
@@ -176,6 +184,7 @@ def keyword_search(
     db: Session,
     query: str,
     kb_id: str | None = None,
+    document_ids: list[str] | None = None,
     current_user: User | None = None,
     allowed_kb_ids: list[str] | None = None,
     top_k: int = 30,
@@ -184,6 +193,7 @@ def keyword_search(
         db,
         query,
         kb_id=kb_id,
+        document_ids=document_ids,
         current_user=current_user,
         allowed_kb_ids=allowed_kb_ids,
         top_k=top_k,

@@ -35,21 +35,32 @@ class VectorIndexer:
         db: Session,
         top_k: int = 30,
         kb_id: str | None = None,
+        document_ids: list[str] | None = None,
         current_user: User | None = None,
         allowed_kb_ids: list[str] | None = None,
     ) -> list[dict]:
         if allowed_kb_ids == []:
             return []
+        if document_ids is not None and not document_ids:
+            return []
 
-        qdrant_results = self._try_qdrant_search(query_vector, top_k, kb_id, allowed_kb_ids)
+        qdrant_results = self._try_qdrant_search(query_vector, top_k, kb_id, allowed_kb_ids, document_ids)
         if qdrant_results:
-            return self._filter_results(db, qdrant_results, top_k, kb_id, current_user, allowed_kb_ids)
+            return self._filter_results(db, qdrant_results, top_k, kb_id, document_ids, current_user, allowed_kb_ids)
 
-        memory_results = self._search_memory(query_vector, db, top_k, kb_id, current_user, allowed_kb_ids)
+        memory_results = self._search_memory(query_vector, db, top_k, kb_id, document_ids, current_user, allowed_kb_ids)
         if memory_results:
             return memory_results
 
-        return self._search_persisted_vectors(query_vector, db, top_k, kb_id, current_user, allowed_kb_ids)
+        return self._search_persisted_vectors(
+            query_vector,
+            db,
+            top_k,
+            kb_id,
+            document_ids,
+            current_user,
+            allowed_kb_ids,
+        )
 
     def delete_document(self, document_id: str) -> None:
         for point_id, (_, payload) in list(self._memory.items()):
@@ -98,11 +109,18 @@ class VectorIndexer:
         db: Session,
         top_k: int,
         kb_id: str | None,
+        document_ids: list[str] | None,
         current_user: User | None,
         allowed_kb_ids: list[str] | None,
     ) -> list[dict]:
         allowed_chunk_ids = set(
-            self._visible_chunk_query(db, kb_id=kb_id, current_user=current_user, allowed_kb_ids=allowed_kb_ids)
+            self._visible_chunk_query(
+                db,
+                kb_id=kb_id,
+                document_ids=document_ids,
+                current_user=current_user,
+                allowed_kb_ids=allowed_kb_ids,
+            )
             .with_entities(DocumentChunk.id)
             .all()
         )
@@ -129,11 +147,18 @@ class VectorIndexer:
         db: Session,
         top_k: int,
         kb_id: str | None,
+        document_ids: list[str] | None,
         current_user: User | None,
         allowed_kb_ids: list[str] | None,
     ) -> list[dict]:
         chunks = (
-            self._visible_chunk_query(db, kb_id=kb_id, current_user=current_user, allowed_kb_ids=allowed_kb_ids)
+            self._visible_chunk_query(
+                db,
+                kb_id=kb_id,
+                document_ids=document_ids,
+                current_user=current_user,
+                allowed_kb_ids=allowed_kb_ids,
+            )
             .filter(DocumentChunk.embedding_json.is_not(None))
             .all()
         )
@@ -161,13 +186,18 @@ class VectorIndexer:
         results: list[dict],
         top_k: int,
         kb_id: str | None,
+        document_ids: list[str] | None,
         current_user: User | None,
         allowed_kb_ids: list[str] | None,
     ) -> list[dict]:
         visible_ids = {
             item[0]
             for item in self._visible_chunk_query(
-                db, kb_id=kb_id, current_user=current_user, allowed_kb_ids=allowed_kb_ids
+                db,
+                kb_id=kb_id,
+                document_ids=document_ids,
+                current_user=current_user,
+                allowed_kb_ids=allowed_kb_ids,
             )
             .with_entities(DocumentChunk.id)
             .all()
@@ -178,6 +208,7 @@ class VectorIndexer:
         self,
         db: Session,
         kb_id: str | None,
+        document_ids: list[str] | None,
         current_user: User | None,
         allowed_kb_ids: list[str] | None,
     ):
@@ -187,6 +218,10 @@ class VectorIndexer:
             query = query.filter(Document.kb_id == kb_id)
         elif allowed_kb_ids is not None:
             query = query.filter(Document.kb_id.in_(allowed_kb_ids))
+        if document_ids is not None:
+            if not document_ids:
+                return query.filter(False)
+            query = query.filter(Document.id.in_(document_ids))
         elif current_user and current_user.role != "system_admin":
             query = query.outerjoin(KnowledgeBase, KnowledgeBase.id == Document.kb_id).filter(
                 or_(
@@ -225,12 +260,13 @@ class VectorIndexer:
         top_k: int,
         kb_id: str | None,
         allowed_kb_ids: list[str] | None,
+        document_ids: list[str] | None,
     ) -> list[dict]:
         try:
             from qdrant_client import QdrantClient
 
             client = QdrantClient(url=self.settings.qdrant_url, timeout=3, check_compatibility=False)
-            query_filter = self._qdrant_filter(kb_id, allowed_kb_ids)
+            query_filter = self._qdrant_filter(kb_id, allowed_kb_ids, document_ids)
             points = client.search(
                 collection_name=self.settings.qdrant_collection,
                 query_vector=[float(value) for value in query_vector],
@@ -255,18 +291,22 @@ class VectorIndexer:
             self._qdrant_available = False
             return []
 
-    def _qdrant_filter(self, kb_id: str | None, allowed_kb_ids: list[str] | None):
+    def _qdrant_filter(self, kb_id: str | None, allowed_kb_ids: list[str] | None, document_ids: list[str] | None):
         try:
             from qdrant_client.http import models
 
+            conditions = []
             if kb_id:
-                return models.Filter(
-                    must=[models.FieldCondition(key="kb_id", match=models.MatchValue(value=kb_id))]
-                )
-            if allowed_kb_ids:
-                return models.Filter(
-                    must=[models.FieldCondition(key="kb_id", match=models.MatchAny(any=allowed_kb_ids))]
-                )
+                conditions.append(models.FieldCondition(key="kb_id", match=models.MatchValue(value=kb_id)))
+            elif allowed_kb_ids:
+                conditions.append(models.FieldCondition(key="kb_id", match=models.MatchAny(any=allowed_kb_ids)))
+            if document_ids is not None:
+                if not document_ids:
+                    conditions.append(models.FieldCondition(key="document_id", match=models.MatchAny(any=["__none__"])))
+                else:
+                    conditions.append(models.FieldCondition(key="document_id", match=models.MatchAny(any=document_ids)))
+            if conditions:
+                return models.Filter(must=conditions)
         except Exception:
             return None
         return None

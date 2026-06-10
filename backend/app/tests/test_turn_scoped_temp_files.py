@@ -31,6 +31,7 @@ def test_ready_temp_file_is_bound_to_single_user_turn_and_sent_to_prompt(monkeyp
         question,
         kb_id=None,
         kb_ids=None,
+        document_ids=None,
         mode="normal",
         uploaded_files=None,
         conversation_id=None,

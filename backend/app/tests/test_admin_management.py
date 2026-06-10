@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.api.routes import admin as admin_routes
 from app.api.routes import document as document_routes
 from app.core import config as core_config
 from app.db.models import Document, DocumentBlock, DocumentChunk
@@ -107,13 +108,29 @@ def test_system_admin_can_delete_document_and_indexes(tmp_path, monkeypatch):
 
 def test_model_setup_accepts_deepseek_config_without_exposing_api_key(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_config, "RUNTIME_CONFIG_PATH", tmp_path / ".runtime_model_config.json")
+
+    async def fake_configure_deepseek(api_key: str, model: str = "deepseek-chat") -> dict:
+        assert api_key == "deepseek-test-secret"
+        config = runtime_config.load_runtime_config()
+        config["llm"] = {
+            "provider": "deepseek",
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": api_key,
+            "model": model,
+            "use_mock": False,
+            "validation": {"status": "ok", "message": "DeepSeek API 验证通过"},
+        }
+        runtime_config.save_runtime_config(config)
+        return runtime_config.public_runtime_config()
+
+    monkeypatch.setattr(admin_routes, "configure_deepseek", fake_configure_deepseek)
     client = TestClient(app)
     with client:
         headers = _login(client, "admin", "admin123")
         response = client.post(
             "/api/admin/model-setup/deepseek",
             headers=headers,
-            json={"api_key": "sk-test-secret", "model": "deepseek-chat"},
+            json={"api_key": "deepseek-test-secret", "model": "deepseek-chat"},
         )
 
     assert response.status_code == 200

@@ -1,4 +1,4 @@
-import { DeleteOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
+import { DeleteOutlined, MessageOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
 import { Button, Card, Descriptions, Empty, Input, message, Modal, Space, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -59,32 +59,48 @@ export default function DocumentDetailPage() {
             <Typography.Title level={5} style={{ margin: 0 }}>
               {document.file_name}
             </Typography.Title>
-            {canDeleteDocument ? (
+            <Space>
               <Button
-                danger
-                icon={<DeleteOutlined />}
+                icon={<MessageOutlined />}
                 onClick={() => {
-                  Modal.confirm({
-                    title: `删除文件：${document.file_name}`,
-                    content: '文件、解析块、chunk、关键词索引和向量索引都会一起删除。',
-                    okText: '删除',
-                    okButtonProps: { danger: true },
-                    cancelText: '取消',
-                    onOk: async () => {
-                      try {
-                        await deleteDocument(document.id);
-                        message.success('文件已删除');
-                        navigate('/kb');
-                      } catch (error) {
-                        message.error(error instanceof Error ? error.message : '删除失败');
-                      }
-                    },
+                  const params = new URLSearchParams({
+                    scope: 'document',
+                    scopeLabel: document.file_name,
+                    documentIds: document.id,
                   });
+                  if (document.kb_id) params.set('kbIds', document.kb_id);
+                  navigate(`/chat?${params.toString()}`);
                 }}
               >
-                删除文件
+                围绕文件对话
               </Button>
-            ) : null}
+              {canDeleteDocument ? (
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => {
+                    Modal.confirm({
+                      title: `删除文件：${document.file_name}`,
+                      content: '文件、解析块、chunk、关键词索引和向量索引都会一起删除。',
+                      okText: '删除',
+                      okButtonProps: { danger: true },
+                      cancelText: '取消',
+                      onOk: async () => {
+                        try {
+                          await deleteDocument(document.id);
+                          message.success('文件已删除');
+                          navigate('/kb');
+                        } catch (error) {
+                          message.error(error instanceof Error ? error.message : '删除失败');
+                        }
+                      },
+                    });
+                  }}
+                >
+                  删除文件
+                </Button>
+              ) : null}
+            </Space>
           </Space>
           <Descriptions column={3}>
             <Descriptions.Item label="类型">{document.file_ext}</Descriptions.Item>

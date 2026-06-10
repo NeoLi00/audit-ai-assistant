@@ -143,7 +143,7 @@ async def test_answer_service_sends_multi_message_context_to_llm(monkeypatch):
     db = _db_session()
     captured = {}
 
-    async def fake_retrieve_evidence(db, question, kb_id=None, kb_ids=None, current_user=None):
+    async def fake_retrieve_evidence(db, question, kb_id=None, kb_ids=None, document_ids=None, current_user=None):
         return [{"chunk_id": "r1", "file_name": "制度库.pdf", "text": "制度库证据"}]
 
     class FakeLLMClient:

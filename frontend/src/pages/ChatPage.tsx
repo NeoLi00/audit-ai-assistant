@@ -1,5 +1,7 @@
 import {
   CheckCircleOutlined,
+  DeleteOutlined,
+  EditOutlined,
   CloseCircleOutlined,
   DislikeOutlined,
   ExclamationCircleOutlined,
@@ -10,14 +12,18 @@ import {
   WarningOutlined,
 } from '@ant-design/icons';
 import { Button, Card, Empty, List, message, Select, Space, Spin, Tag, Typography } from 'antd';
+import { Input, Modal } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   createConversation,
+  deleteConversation,
+  deleteTempFile,
   fetchConversation,
   fetchConversations,
   sendFeedback,
   sendMessage,
+  updateConversationTitle,
   type ChatMessage,
   type Conversation,
   type TempFile,
@@ -36,6 +42,9 @@ export default function ChatPage() {
     () => parseKbIds(requestedKbIdsParam, requestedKbId),
     [requestedKbId, requestedKbIdsParam],
   );
+  const requestedDocumentIds = useMemo(() => parseIds(searchParams.get('documentIds')), [searchParams]);
+  const requestedScope = searchParams.get('scope') || '';
+  const requestedScopeLabel = searchParams.get('scopeLabel') || '';
   const shouldOpenUpload = searchParams.get('upload') === '1';
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [active, setActive] = useState<Conversation | null>(null);
@@ -45,6 +54,8 @@ export default function ChatPage() {
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>(requestedKbIds);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [editingConversationId, setEditingConversationId] = useState<string>();
+  const [editingTitle, setEditingTitle] = useState('');
   const initialQuerySent = useRef(false);
   const initialUploadOpened = useRef(false);
 
@@ -53,15 +64,43 @@ export default function ChatPage() {
     setActive(conversation);
     setMessages(conversation.messages || []);
     setTempFiles(conversation.temp_files || []);
+    if (conversation.scope?.kb_ids?.length) {
+      setSelectedKbIds(conversation.scope.kb_ids);
+    }
   }, []);
 
-  const bootstrap = useCallback(async (requestedConversationId?: string) => {
+  const bootstrap = useCallback(async () => {
     try {
       const list = await fetchConversations();
+      setConversations(list);
+      if (requestedConversationId) {
+        await loadConversation(requestedConversationId);
+        return;
+      }
+      const shouldCreateScopedConversation =
+        Boolean(requestedQuery) || Boolean(requestedScope) || requestedKbIds.length > 0 || requestedDocumentIds.length > 0;
+      if (shouldCreateScopedConversation) {
+        const title = requestedScopeLabel || requestedQuery?.slice(0, 24) || '新会话';
+        const created = await createConversation({
+          title,
+          kb_ids: requestedKbIds,
+          document_ids: requestedDocumentIds,
+          scope_label: requestedScopeLabel,
+        });
+        setConversations((items) => [created, ...items.filter((item) => item.id !== created.id)]);
+        setActive(created);
+        setMessages([]);
+        setTempFiles([]);
+        if (requestedKbIds.length) {
+          setSelectedKbIds(requestedKbIds);
+        }
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.set('conversationId', created.id);
+        setSearchParams(nextParams, { replace: true });
+        return;
+      }
       if (list.length) {
-        setConversations(list);
-        const targetId = requestedConversationId || list[0].id;
-        await loadConversation(targetId);
+        await loadConversation(list[0].id);
       } else {
         const created = await createConversation('审计问答');
         setConversations([created]);
@@ -70,15 +109,27 @@ export default function ChatPage() {
     } catch (error) {
       message.error(error instanceof Error ? error.message : '会话加载失败');
     }
-  }, [loadConversation]);
+  }, [
+    loadConversation,
+    requestedConversationId,
+    requestedDocumentIds,
+    requestedKbIds,
+    requestedQuery,
+    requestedScope,
+    requestedScopeLabel,
+    searchParams,
+    setSearchParams,
+  ]);
 
   const handleSubmit = useCallback(async (text: string, kbIds: string[] = selectedKbIds) => {
     let conversation = active;
     if (!conversation) {
-      conversation = await createConversation(text.slice(0, 20));
+      conversation = await createConversation(text.slice(0, 24));
       setActive(conversation);
       setConversations((items) => [conversation as Conversation, ...items]);
     }
+    const documentIds = conversation.scope?.document_ids || [];
+    const effectiveKbIds = documentIds.length ? conversation.scope?.kb_ids || [] : kbIds;
     const userMessage: ChatMessage = {
       id: `local-${Date.now()}`,
       role: 'user',
@@ -90,7 +141,7 @@ export default function ChatPage() {
     setMessages((items) => [...items, userMessage]);
     setLoading(true);
     try {
-      const result = await sendMessage(conversation.id, text, kbIds);
+      const result = await sendMessage(conversation.id, text, effectiveKbIds, documentIds);
       const returnedUserMessage = result.user_message;
       setMessages((items) => {
         const nextItems = returnedUserMessage
@@ -98,6 +149,18 @@ export default function ChatPage() {
           : items;
         return [...nextItems, result.message];
       });
+      setConversations((items) =>
+        items.map((item) =>
+          item.id === conversation.id && isDefaultConversationTitle(item.title)
+            ? { ...item, title: titleFromQuestion(text), updated_at: new Date().toISOString() }
+            : item,
+        ),
+      );
+      setActive((current) =>
+        current && current.id === conversation.id && isDefaultConversationTitle(current.title)
+          ? { ...current, title: titleFromQuestion(text), updated_at: new Date().toISOString() }
+          : current,
+      );
       setTempFiles([]);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '发送失败');
@@ -108,8 +171,8 @@ export default function ChatPage() {
   }, [active, selectedKbIds, tempFiles]);
 
   useEffect(() => {
-    bootstrap(requestedConversationId);
-  }, [bootstrap, requestedConversationId]);
+    bootstrap();
+  }, [bootstrap]);
 
   useEffect(() => {
     fetchKnowledgeBases()
@@ -155,6 +218,68 @@ export default function ChatPage() {
     message.success('反馈已记录');
   };
 
+  const saveConversationTitle = async (conversation: Conversation) => {
+    const title = editingTitle.trim();
+    if (!title) {
+      message.warning('标题不能为空');
+      return;
+    }
+    try {
+      const updated = await updateConversationTitle(conversation.id, title);
+      setConversations((items) => items.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+      setActive((current) => (current?.id === updated.id ? { ...current, ...updated } : current));
+      setEditingConversationId(undefined);
+      setEditingTitle('');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '改名失败');
+    }
+  };
+
+  const confirmDeleteConversation = (conversation: Conversation) => {
+    Modal.confirm({
+      title: `删除会话：${conversation.title}`,
+      content: '会话消息和未过期的临时附件都会一起删除。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deleteConversation(conversation.id);
+          const remaining = conversations.filter((item) => item.id !== conversation.id);
+          setConversations(remaining);
+          if (active?.id === conversation.id) {
+            const next = remaining[0];
+            if (next) {
+              setSearchParams({ conversationId: next.id });
+              await loadConversation(next.id);
+            } else {
+              const created = await createConversation('新会话');
+              setConversations([created]);
+              setActive(created);
+              setMessages([]);
+              setTempFiles([]);
+              setSearchParams({ conversationId: created.id });
+            }
+          }
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '删除失败');
+        }
+      },
+    });
+  };
+
+  const removePendingTempFile = async (file: TempFile) => {
+    if (!active) return;
+    try {
+      await deleteTempFile(active.id, file.id);
+      setTempFiles((items) => items.filter((item) => item.id !== file.id));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '删除附件失败');
+    }
+  };
+
+  const activeScope = active?.scope;
+
   return (
     <div className="chat-page">
       <aside className="conversation-list">
@@ -182,7 +307,49 @@ export default function ChatPage() {
                 loadConversation(item.id);
               }}
             >
-              <Typography.Text ellipsis>{item.title}</Typography.Text>
+              {editingConversationId === item.id ? (
+                <Space.Compact className="full-width" onClick={(event) => event.stopPropagation()}>
+                  <Input
+                    size="small"
+                    value={editingTitle}
+                    onChange={(event) => setEditingTitle(event.target.value)}
+                    onPressEnter={() => saveConversationTitle(item)}
+                  />
+                  <Button size="small" icon={<CheckCircleOutlined />} onClick={() => saveConversationTitle(item)} />
+                  <Button
+                    size="small"
+                    icon={<CloseCircleOutlined />}
+                    onClick={() => {
+                      setEditingConversationId(undefined);
+                      setEditingTitle('');
+                    }}
+                  />
+                </Space.Compact>
+              ) : (
+                <Space className="full-width" style={{ justifyContent: 'space-between' }}>
+                  <Typography.Text ellipsis>{item.title}</Typography.Text>
+                  <Space size={2} onClick={(event) => event.stopPropagation()}>
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<EditOutlined />}
+                      aria-label="编辑会话标题"
+                      onClick={() => {
+                        setEditingConversationId(item.id);
+                        setEditingTitle(item.title);
+                      }}
+                    />
+                    <Button
+                      size="small"
+                      danger
+                      type="text"
+                      icon={<DeleteOutlined />}
+                      aria-label="删除会话"
+                      onClick={() => confirmDeleteConversation(item)}
+                    />
+                  </Space>
+                </Space>
+              )}
             </List.Item>
           )}
         />
@@ -214,6 +381,13 @@ export default function ChatPage() {
           {loading && <Spin tip="正在检索知识库并生成回答" />}
         </div>
         <div className="chat-composer">
+          {activeScope?.label ? (
+            <div className="chat-scope-strip">
+              <Tag color={activeScope.type === 'documents' ? 'purple' : 'blue'}>
+                {activeScope.type === 'documents' ? '围绕文件' : '围绕知识库'}：{activeScope.label}
+              </Tag>
+            </div>
+          ) : null}
           <div className="chat-kb-selector">
             <Typography.Text type="secondary">检索知识库</Typography.Text>
             <Select
@@ -231,7 +405,7 @@ export default function ChatPage() {
           {tempFiles.length > 0 && (
             <div className="chat-attachment-strip">
               {tempFiles.map((file) => (
-                <ChatAttachment key={file.id} file={file} />
+                <ChatAttachment key={file.id} file={file} onDelete={() => removePendingTempFile(file)} />
               ))}
             </div>
           )}
@@ -253,17 +427,37 @@ export default function ChatPage() {
 }
 
 function parseKbIds(rawKbIds: string | null, fallbackKbId?: string): string[] {
-  const parsed = (rawKbIds || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const parsed = parseIds(rawKbIds);
   if (parsed.length) {
-    return Array.from(new Set(parsed));
+    return parsed;
   }
   return fallbackKbId ? [fallbackKbId] : [];
 }
 
-function ChatAttachment({ file, compact = false }: { file: TempFile; compact?: boolean }) {
+function parseIds(raw: string | null): string[] {
+  return (raw || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isDefaultConversationTitle(title: string) {
+  return ['', '新会话', '审计问答'].includes(title.trim());
+}
+
+function titleFromQuestion(text: string) {
+  return text.trim().replace(/\s+/g, ' ').slice(0, 24) || '新会话';
+}
+
+function ChatAttachment({
+  file,
+  compact = false,
+  onDelete,
+}: {
+  file: TempFile;
+  compact?: boolean;
+  onDelete?: () => void;
+}) {
   const status = tempFileStatusMeta(file.status);
   return (
     <div className={`chat-attachment ${status.className} ${compact ? 'compact' : ''}`}>
@@ -274,6 +468,16 @@ function ChatAttachment({ file, compact = false }: { file: TempFile; compact?: b
       <Tag icon={status.icon} color={status.color}>
         {status.label}
       </Tag>
+      {onDelete ? (
+        <Button
+          size="small"
+          danger
+          type="text"
+          icon={<DeleteOutlined />}
+          aria-label="删除附件"
+          onClick={onDelete}
+        />
+      ) : null}
     </div>
   );
 }

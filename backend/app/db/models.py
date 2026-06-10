@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.mutable import MutableList
+from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -134,6 +134,7 @@ class Conversation(Base, TimestampMixin):
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     title: Mapped[str] = mapped_column(String(200), default="新会话")
     mode: Mapped[str] = mapped_column(String(40), default="normal")
+    metadata_json: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict)
     messages: Mapped[list["Message"]] = relationship(
         cascade="all, delete-orphan", back_populates="conversation"
     )

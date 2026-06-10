@@ -16,6 +16,7 @@ async def retrieve_evidence(
     question: str,
     kb_id: str | None = None,
     kb_ids: list[str] | None = None,
+    document_ids: list[str] | None = None,
     top_k: int = 8,
     current_user: User | None = None,
 ) -> list[dict]:
@@ -24,6 +25,7 @@ async def retrieve_evidence(
         question,
         kb_id=kb_id,
         kb_ids=kb_ids,
+        document_ids=document_ids,
         top_k=top_k,
         current_user=current_user,
     )
@@ -35,12 +37,19 @@ async def retrieve_evidence_with_trace(
     question: str,
     kb_id: str | None = None,
     kb_ids: list[str] | None = None,
+    document_ids: list[str] | None = None,
     top_k: int = 8,
     current_user: User | None = None,
 ) -> dict:
     allowed_kb_ids = _allowed_kb_ids(db, current_user, kb_id, kb_ids)
+    requested_document_ids = None if document_ids is None else _unique_strings(document_ids)
     trace: dict = {
-        "filters": {"kb_id": kb_id, "kb_ids": kb_ids or [], "allowed_kb_ids": allowed_kb_ids},
+        "filters": {
+            "kb_id": kb_id,
+            "kb_ids": kb_ids or [],
+            "document_ids": requested_document_ids or [],
+            "allowed_kb_ids": allowed_kb_ids,
+        },
         "vector": [],
         "keyword": [],
         "fused": [],
@@ -57,6 +66,7 @@ async def retrieve_evidence_with_trace(
             db=db,
             top_k=50,
             kb_id=kb_id,
+            document_ids=requested_document_ids,
             current_user=current_user,
             allowed_kb_ids=allowed_kb_ids,
         )
@@ -67,6 +77,7 @@ async def retrieve_evidence_with_trace(
         db,
         question,
         kb_id=kb_id,
+        document_ids=requested_document_ids,
         current_user=current_user,
         allowed_kb_ids=allowed_kb_ids,
         top_k=50,
@@ -108,6 +119,10 @@ def _allowed_kb_ids(
             )
         )
     return [item[0] for item in query.all()]
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
 def _hydrate_evidence(db: Session, fused: list[dict], top_k: int) -> list[dict]:

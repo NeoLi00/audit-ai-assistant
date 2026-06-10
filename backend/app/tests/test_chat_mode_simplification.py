@@ -29,6 +29,7 @@ def test_chat_routes_normalize_modes_to_plain_question_answering(monkeypatch):
         question,
         kb_id=None,
         kb_ids=None,
+        document_ids=None,
         mode="normal",
         uploaded_files=None,
         conversation_id=None,

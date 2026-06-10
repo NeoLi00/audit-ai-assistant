@@ -49,6 +49,39 @@ class FakeAsyncClient:
 
 
 @pytest.mark.asyncio
+async def test_configure_deepseek_validates_chat_completion_and_hides_api_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_config, "RUNTIME_CONFIG_PATH", tmp_path / ".runtime_model_config.json")
+    FakeAsyncClient.requests = []
+    FakeAsyncClient.fail_chat = False
+    monkeypatch.setattr(runtime_config.httpx, "AsyncClient", FakeAsyncClient)
+
+    config = await runtime_config.configure_deepseek("deepseek-test-secret", model="deepseek-chat")
+
+    assert config["llm"]["provider"] == "deepseek"
+    assert config["llm"]["base_url"] == "https://api.deepseek.com/v1"
+    assert config["llm"]["model"] == "deepseek-chat"
+    assert config["llm"]["api_key_set"] is True
+    assert "api_key" not in config["llm"]
+    assert config["llm"]["validation"]["status"] == "ok"
+    post_request = next(request for request in FakeAsyncClient.requests if request["url"].endswith("/chat/completions"))
+    assert post_request["headers"]["Authorization"] == "Bearer deepseek-test-secret"
+    assert post_request["json"]["messages"][0]["content"] == "回复一句：LLM 连接成功"
+
+
+@pytest.mark.asyncio
+async def test_invalid_deepseek_config_is_not_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_config, "RUNTIME_CONFIG_PATH", tmp_path / ".runtime_model_config.json")
+    FakeAsyncClient.requests = []
+    FakeAsyncClient.fail_chat = True
+    monkeypatch.setattr(runtime_config.httpx, "AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(runtime_config.ModelValidationError):
+        await runtime_config.configure_deepseek("deepseek-bad-secret", model="deepseek-chat")
+
+    assert runtime_config.load_runtime_config()["llm"] == {}
+
+
+@pytest.mark.asyncio
 async def test_configure_local_llm_validates_chat_completion_before_saving(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_config, "RUNTIME_CONFIG_PATH", tmp_path / ".runtime_model_config.json")
     FakeAsyncClient.requests = []

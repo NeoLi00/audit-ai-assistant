@@ -124,12 +124,15 @@ def model_setup(current_user: User = Depends(require_admin)):
 
 
 @router.post("/model-setup/deepseek")
-def setup_deepseek(payload: DeepSeekConfigRequest, current_user: User = Depends(require_admin)):
+async def setup_deepseek(payload: DeepSeekConfigRequest, current_user: User = Depends(require_admin)):
     if not can_manage_shared_kb(current_user):
         raise HTTPException(status_code=403, detail="只有系统管理员可以配置测试模型")
     if not payload.api_key.strip():
         raise HTTPException(status_code=400, detail="请填写 DeepSeek API Key")
-    return ok(configure_deepseek(payload.api_key.strip(), payload.model.strip() or "deepseek-chat"))
+    try:
+        return ok(await configure_deepseek(payload.api_key.strip(), payload.model.strip() or "deepseek-chat"))
+    except ModelValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/model-setup/llm")

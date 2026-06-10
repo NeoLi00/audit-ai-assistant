@@ -54,14 +54,16 @@ def public_runtime_config() -> dict:
     return {"llm": llm, "embedding": embedding, "local_e5": config.get("local_e5") or {}}
 
 
-def configure_deepseek(api_key: str, model: str = "deepseek-chat") -> dict:
+async def configure_deepseek(api_key: str, model: str = "deepseek-chat") -> dict:
+    validation = await validate_deepseek(api_key, model=model)
     config = load_runtime_config()
     config["llm"] = {
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com/v1",
         "api_key": api_key,
-        "model": model,
+        "model": validation["model"],
         "use_mock": False,
+        "validation": validation,
     }
     save_runtime_config(config)
     get_settings.cache_clear()
@@ -139,6 +141,37 @@ async def validate_local_llm(base_url: str, model: str | None = None) -> dict:
                 }
             errors.append(f"{candidate_url}/chat/completions -> 没有返回 message.content")
     raise ModelValidationError(f"LLM 验证失败：无法调用 /chat/completions：{_format_validation_errors(errors)}")
+
+
+async def validate_deepseek(api_key: str, model: str = "deepseek-chat") -> dict:
+    model_name = model.strip() or "deepseek-chat"
+    headers = _auth_headers(api_key)
+    timeout = httpx.Timeout(20.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": "回复一句：LLM 连接成功"}],
+            "stream": False,
+            "temperature": 0.2,
+            "max_tokens": 128,
+        }
+        try:
+            response = await client.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            raise ModelValidationError(f"DeepSeek 验证失败：无法调用 /chat/completions：{exc}") from exc
+    content = str(data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+    if not content:
+        raise ModelValidationError("DeepSeek 验证失败：没有返回 message.content")
+    return {
+        "status": "ok",
+        "message": "DeepSeek API 验证通过",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": model_name,
+        "checked_at": datetime.now(UTC).isoformat(),
+        "sample": content[:80],
+    }
 
 
 async def validate_local_embedding(base_url: str, api_key: str = "", model: str | None = None) -> dict:

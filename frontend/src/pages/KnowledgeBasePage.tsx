@@ -2,6 +2,7 @@ import {
   AppstoreOutlined,
   BarsOutlined,
   DeleteOutlined,
+  MessageOutlined,
   PlusOutlined,
   SearchOutlined,
   UploadOutlined,
@@ -119,6 +120,26 @@ export default function KnowledgeBasePage() {
     });
   };
 
+  const openKnowledgeBaseChat = () => {
+    if (!selectedKb) return;
+    const params = new URLSearchParams({
+      scope: 'kb',
+      kbIds: selectedKb.id,
+      scopeLabel: selectedKb.name,
+    });
+    navigate(`/chat?${params.toString()}`);
+  };
+
+  const openDocumentChat = (document: DocumentItem) => {
+    const params = new URLSearchParams({
+      scope: 'document',
+      scopeLabel: document.file_name,
+      documentIds: document.id,
+    });
+    if (document.kb_id) params.set('kbIds', document.kb_id);
+    navigate(`/chat?${params.toString()}`);
+  };
+
   return (
     <div className="kb-page">
       <aside className="kb-tree">
@@ -180,6 +201,11 @@ export default function KnowledgeBasePage() {
               删除知识库
             </Button>
           )}
+          {selectedKb && (
+            <Button icon={<MessageOutlined />} onClick={openKnowledgeBaseChat}>
+              围绕知识库对话
+            </Button>
+          )}
           <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
             上传
           </Button>
@@ -190,6 +216,7 @@ export default function KnowledgeBasePage() {
               <DocumentCard
                 key={document.id}
                 document={document}
+                onChat={openDocumentChat}
                 onDelete={canDeleteDocument(document) ? confirmDeleteDocument : undefined}
               />
             ))}
@@ -208,13 +235,20 @@ export default function KnowledgeBasePage() {
               { title: '上传时间', dataIndex: 'created_at' },
               {
                 title: '操作',
-                width: 100,
+                width: 180,
                 render: (_, document: DocumentItem) =>
-                  canDeleteDocument(document) ? (
-                    <Button danger type="link" icon={<DeleteOutlined />} onClick={() => confirmDeleteDocument(document)}>
-                      删除
-                    </Button>
-                  ) : null,
+                  (
+                    <Space size={4}>
+                      <Button type="link" icon={<MessageOutlined />} onClick={() => openDocumentChat(document)}>
+                        对话
+                      </Button>
+                      {canDeleteDocument(document) ? (
+                        <Button danger type="link" icon={<DeleteOutlined />} onClick={() => confirmDeleteDocument(document)}>
+                          删除
+                        </Button>
+                      ) : null}
+                    </Space>
+                  ),
               },
             ]}
           />
@@ -225,6 +259,10 @@ export default function KnowledgeBasePage() {
             onSubmit={(text) => {
               const params = new URLSearchParams({ query: text });
               if (selectedKbId) params.set('kbIds', selectedKbId);
+              if (selectedKb) {
+                params.set('scope', 'kb');
+                params.set('scopeLabel', selectedKb.name);
+              }
               navigate(`/chat?${params.toString()}`);
             }}
           />

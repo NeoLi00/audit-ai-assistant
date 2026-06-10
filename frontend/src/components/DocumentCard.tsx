@@ -1,4 +1,4 @@
-import { DeleteOutlined, FileDoneOutlined, FileTextOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FileDoneOutlined, FileTextOutlined, MessageOutlined } from '@ant-design/icons';
 import { Button, Card, Space, Tag, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import type { DocumentItem } from '../api/kb';
@@ -18,9 +18,10 @@ const STATUS_COLOR: Record<string, string> = {
 type DocumentCardProps = {
   document: DocumentItem;
   onDelete?: (document: DocumentItem) => void;
+  onChat?: (document: DocumentItem) => void;
 };
 
-export default function DocumentCard({ document, onDelete }: DocumentCardProps) {
+export default function DocumentCard({ document, onDelete, onChat }: DocumentCardProps) {
   const navigate = useNavigate();
 
   return (
@@ -43,18 +44,31 @@ export default function DocumentCard({ document, onDelete }: DocumentCardProps) 
             版本 {document.version} · {document.is_current_version ? '当前版本' : '历史版本'}
           </Typography.Text>
         </Space>
-        {onDelete ? (
-          <Button
-            danger
-            type="text"
-            icon={<DeleteOutlined />}
-            aria-label="删除文件"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete(document);
-            }}
-          />
-        ) : null}
+        <Space size={2}>
+          {onChat ? (
+            <Button
+              type="text"
+              icon={<MessageOutlined />}
+              aria-label="围绕文件对话"
+              onClick={(event) => {
+                event.stopPropagation();
+                onChat(document);
+              }}
+            />
+          ) : null}
+          {onDelete ? (
+            <Button
+              danger
+              type="text"
+              icon={<DeleteOutlined />}
+              aria-label="删除文件"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(document);
+              }}
+            />
+          ) : null}
+        </Space>
       </Space>
     </Card>
   );

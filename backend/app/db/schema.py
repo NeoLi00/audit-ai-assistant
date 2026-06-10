@@ -12,6 +12,10 @@ SQLITE_DOCUMENT_CHUNK_COLUMNS: dict[str, str] = {
     "embedding_json": "JSON",
 }
 
+SQLITE_CONVERSATION_COLUMNS: dict[str, str] = {
+    "metadata_json": "JSON DEFAULT '{}'",
+}
+
 
 def ensure_local_schema(engine) -> None:
     if engine.dialect.name != "sqlite":
@@ -19,8 +23,13 @@ def ensure_local_schema(engine) -> None:
     inspector = inspect(engine)
     if "document_chunks" not in inspector.get_table_names():
         return
-    existing = {column["name"] for column in inspector.get_columns("document_chunks")}
     with engine.begin() as connection:
+        if "conversations" in inspector.get_table_names():
+            conversation_existing = {column["name"] for column in inspector.get_columns("conversations")}
+            for column_name, ddl in SQLITE_CONVERSATION_COLUMNS.items():
+                if column_name not in conversation_existing:
+                    connection.execute(text(f"alter table conversations add column {column_name} {ddl}"))
+        existing = {column["name"] for column in inspector.get_columns("document_chunks")}
         for column_name, ddl in SQLITE_DOCUMENT_CHUNK_COLUMNS.items():
             if column_name not in existing:
                 connection.execute(text(f"alter table document_chunks add column {column_name} {ddl}"))
