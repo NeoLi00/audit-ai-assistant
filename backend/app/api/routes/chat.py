@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.api.routes.auth import get_current_user
@@ -19,6 +20,7 @@ from app.schemas.chat import (
 from app.schemas.common import ok
 from app.services.audit.audit_logger import log_action, text_digest
 from app.services.chat_context.context_manager import ChatContextManager
+from app.services.model_gateway.gateway import get_llm_client
 from app.services.parser.document_parser import SUPPORTED_EXTENSIONS
 from app.services.parser.excel_analyzer import analyze_excel_question
 from app.services.rag.answer_service import answer_question
@@ -35,6 +37,7 @@ def create_conversation(
     current_user: User = Depends(get_current_user),
 ):
     metadata = _conversation_scope_metadata(payload.kb_ids, payload.document_ids, payload.scope_label)
+    metadata["auto_title"] = True
     conversation = Conversation(
         user_id=current_user.id,
         title=payload.title or "新会话",
@@ -48,14 +51,22 @@ def create_conversation(
 
 
 @router.get("/conversations")
-def list_conversations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    conversations = (
-        db.query(Conversation)
-        .filter(Conversation.user_id == current_user.id)
-        .order_by(Conversation.updated_at.desc())
-        .limit(100)
-        .all()
-    )
+def list_conversations(
+    q: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    query = db.query(Conversation).filter(Conversation.user_id == current_user.id)
+    search = " ".join((q or "").split()).strip()
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(
+            or_(
+                Conversation.title.ilike(pattern),
+                Conversation.messages.any(Message.content.ilike(pattern)),
+            )
+        )
+    conversations = query.order_by(Conversation.updated_at.desc()).limit(100).all()
     return ok([_conversation_dict(item) for item in conversations])
 
 
@@ -85,6 +96,9 @@ def update_conversation(
     if not title:
         raise HTTPException(status_code=400, detail="标题不能为空")
     conversation.title = title
+    metadata = dict(conversation.metadata_json or {})
+    metadata["auto_title"] = False
+    conversation.metadata_json = metadata
     db.commit()
     db.refresh(conversation)
     return ok(_conversation_dict(conversation))
@@ -129,6 +143,7 @@ async def create_message(
         Message.conversation_id == conversation_id,
         Message.role == "user",
     ).count()
+    should_generate_title = previous_user_messages == 0 and _should_auto_title(conversation)
     if previous_user_messages == 0 and _is_default_conversation_title(conversation.title):
         conversation.title = _title_from_question(payload.content)
 
@@ -153,10 +168,14 @@ async def create_message(
         mode=payload.mode,
         uploaded_files=ready_files,
     )
+    if should_generate_title:
+        await _apply_generated_title(db, conversation, user_message, assistant_message)
+        db.refresh(assistant_message)
     return ok(
         {
             "user_message": _message_dict(user_message, attachments=[_temp_file_dict(item) for item in pending_files]),
             "message": _message_dict(assistant_message),
+            "conversation": _conversation_dict(conversation),
         }
     )
 
@@ -181,18 +200,15 @@ async def edit_user_message_and_regenerate(
     target_index = _message_index(messages, message_id)
     if target_index is None:
         raise HTTPException(status_code=404, detail="用户消息不存在")
-    old_content = user_message.content
     user_message.content = content
-    if target_index == 0 and (
-        _is_default_conversation_title(conversation.title)
-        or conversation.title.strip() == _title_from_question(old_content)
-    ):
+    should_generate_title = target_index == 0 and _should_auto_title(conversation)
+    if target_index == 0 and _is_default_conversation_title(conversation.title):
         conversation.title = _title_from_question(content)
     _delete_messages_and_attached_temp_files(db, conversation, messages[target_index + 1 :])
     _clear_conversation_memory(db, conversation)
     db.commit()
 
-    await _generate_assistant_for_user_message(
+    assistant_message = await _generate_assistant_for_user_message(
         db,
         conversation,
         user_message,
@@ -203,6 +219,8 @@ async def edit_user_message_and_regenerate(
         mode=payload.mode,
         uploaded_files=_temp_files_for_message(db, conversation_id, user_message.id),
     )
+    if should_generate_title:
+        await _apply_generated_title(db, conversation, user_message, assistant_message)
     log_action(db, "编辑问题并重新生成", current_user.id, "message", user_message.id, text_digest(content))
     db.refresh(conversation)
     return ok(_conversation_dict(conversation, include_messages=True))
@@ -424,6 +442,68 @@ async def _generate_assistant_for_user_message(
     ChatContextManager().update_memory(db, conversation.id)
     db.refresh(assistant_message)
     return assistant_message
+
+
+async def _apply_generated_title(
+    db: Session,
+    conversation: Conversation,
+    user_message: Message,
+    assistant_message: Message,
+) -> None:
+    fallback = _title_from_question(user_message.content)
+    conversation.title = await _generate_conversation_title(user_message.content, assistant_message.content, fallback)
+    metadata = dict(conversation.metadata_json or {})
+    metadata["auto_title"] = True
+    conversation.metadata_json = metadata
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+
+async def _generate_conversation_title(user_text: str, assistant_text: str, fallback: str) -> str:
+    try:
+        response = await get_llm_client().chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是审计 AI 助手的会话标题生成器。"
+                        "根据第一轮用户问题和助手回答生成一个简洁中文标题。"
+                        "只输出标题，不要解释，不要引号，不要标点结尾。"
+                        "标题应为 6 到 18 个汉字，能概括会话主旨。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"用户问题：{user_text[:800]}\n\n"
+                        f"助手回答：{assistant_text[:1200]}\n\n"
+                        "请输出会话标题："
+                    ),
+                },
+            ]
+        )
+        return _clean_generated_title(response.get("answer", ""), fallback)
+    except Exception:
+        return fallback
+
+
+def _clean_generated_title(raw: str, fallback: str) -> str:
+    title = " ".join((raw or "").strip().split())
+    for prefix in ("标题：", "标题:", "会话标题：", "会话标题:"):
+        if title.startswith(prefix):
+            title = title[len(prefix) :].strip()
+    title = title.strip("「」『』“”\"'`。.!！?？：:")
+    if not title:
+        return fallback
+    return title[:24]
+
+
+def _should_auto_title(conversation: Conversation) -> bool:
+    metadata = conversation.metadata_json or {}
+    if isinstance(metadata, dict) and metadata.get("auto_title") is False:
+        return False
+    return True
 
 
 def _pending_temp_files(db: Session, conversation_id: str) -> list[TempFile]:

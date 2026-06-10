@@ -1,21 +1,31 @@
 import {
+  AuditOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   CopyOutlined,
+  DatabaseOutlined,
   DeleteOutlined,
   DislikeOutlined,
   DownloadOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
+  HistoryOutlined,
+  HomeOutlined,
   LikeOutlined,
   LoadingOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   PaperClipOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SearchOutlined,
+  SettingOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import { Button, Empty, Input, message, Modal, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { fetchMe, type UserInfo } from '../../api/auth';
 import {
   createConversation,
   deleteConversation,
@@ -37,6 +47,8 @@ import FileUploadPanel from '../FileUploadPanel';
 import ModelStatusBadge from '../ModelStatusBadge';
 
 export default function ChatWorkspace() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedConversationId = searchParams.get('conversationId') || undefined;
   const requestedQuery = searchParams.get('query');
@@ -56,9 +68,12 @@ export default function ChatWorkspace() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [tempFiles, setTempFiles] = useState<TempFile[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [user, setUser] = useState<UserInfo | null>(null);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>(requestedKbIds);
   const [loading, setLoading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [conversationSearch, setConversationSearch] = useState('');
   const [editingConversationId, setEditingConversationId] = useState<string>();
   const [editingTitle, setEditingTitle] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string>();
@@ -73,6 +88,19 @@ export default function ChatWorkspace() {
     const byId = new Map(knowledgeBases.map((kb) => [kb.id, kb.name]));
     return selectedKbIds.map((id) => byId.get(id)).filter(Boolean) as string[];
   }, [knowledgeBases, selectedKbIds]);
+  const navItems = useMemo(
+    () =>
+      [
+        { key: '/', label: '工作台', icon: <HomeOutlined /> },
+        { key: '/kb', label: '知识库', icon: <DatabaseOutlined /> },
+        { key: '/history', label: '历史记录', icon: <HistoryOutlined /> },
+        { key: '/settings', label: '设置', icon: <SettingOutlined /> },
+        user?.role === 'system_admin' || user?.role === 'audit_manager'
+          ? { key: '/admin', label: '管理后台', icon: <ToolOutlined /> }
+          : null,
+      ].filter(Boolean) as Array<{ key: string; label: string; icon: ReactNode }>,
+    [user?.role],
+  );
 
   const applyConversation = useCallback((conversation: Conversation) => {
     setActive(conversation);
@@ -89,6 +117,33 @@ export default function ChatWorkspace() {
             }
           : item,
       ),
+    );
+  }, []);
+
+  const syncConversationSummary = useCallback((conversation: Conversation) => {
+    setConversations((items) => {
+      const exists = items.some((item) => item.id === conversation.id);
+      const updated = items.map((item) =>
+        item.id === conversation.id
+          ? {
+              ...item,
+              title: conversation.title,
+              updated_at: conversation.updated_at,
+              scope: conversation.scope,
+            }
+          : item,
+      );
+      return exists ? updated : [conversation, ...updated];
+    });
+    setActive((current) =>
+      current?.id === conversation.id
+        ? {
+            ...current,
+            title: conversation.title,
+            updated_at: conversation.updated_at,
+            scope: conversation.scope,
+          }
+        : current,
     );
   }, []);
 
@@ -181,18 +236,11 @@ export default function ChatWorkspace() {
             : items;
           return [...nextItems, result.message];
         });
-        setConversations((items) =>
-          items.map((item) =>
-            item.id === conversation.id && isDefaultConversationTitle(item.title)
-              ? { ...item, title: titleFromQuestion(text), updated_at: new Date().toISOString() }
-              : item,
-          ),
-        );
-        setActive((current) =>
-          current && current.id === conversation.id && isDefaultConversationTitle(current.title)
-            ? { ...current, title: titleFromQuestion(text), updated_at: new Date().toISOString() }
-            : current,
-        );
+        if (result.conversation) {
+          syncConversationSummary(result.conversation);
+        } else if (isDefaultConversationTitle(conversation.title)) {
+          syncConversationSummary({ ...conversation, title: titleFromQuestion(text), updated_at: new Date().toISOString() });
+        }
         setTempFiles([]);
       } catch (error) {
         message.error(error instanceof Error ? error.message : '发送失败');
@@ -201,7 +249,7 @@ export default function ChatWorkspace() {
         setLoading(false);
       }
     },
-    [active, selectedKbIds, tempFiles],
+    [active, selectedKbIds, syncConversationSummary, tempFiles],
   );
 
   useEffect(() => {
@@ -209,6 +257,13 @@ export default function ChatWorkspace() {
   }, [bootstrap]);
 
   useEffect(() => {
+    if (window.matchMedia('(max-width: 760px)').matches) {
+      setSidebarCollapsed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMe().then(setUser).catch(() => setUser(null));
     fetchKnowledgeBases()
       .then((items) => {
         setKnowledgeBases(items);
@@ -221,6 +276,15 @@ export default function ChatWorkspace() {
       })
       .catch(() => setKnowledgeBases([]));
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      fetchConversations(conversationSearch)
+        .then(setConversations)
+        .catch(() => undefined);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [conversationSearch]);
 
   useEffect(() => {
     if (requestedQuery && active && !initialQuerySent.current) {
@@ -401,22 +465,56 @@ export default function ChatWorkspace() {
   };
 
   const hasMessages = messages.length > 0;
+  const selectedRoute = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
 
   return (
-    <div className="chat-workspace">
+    <div className={`chat-workspace ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="workspace-rail" aria-label="会话列表">
         <div className="workspace-rail-head">
-          <div>
+          <div className="workspace-brand">
+            <span className="workspace-brand-icon">
+              <AuditOutlined />
+            </span>
             <Typography.Title level={5} className="workspace-panel-title">
               审计 AI 助手
             </Typography.Title>
           </div>
-          <Tooltip title="新建对话">
-            <Button className="workspace-new-chat" type="text" icon={<PlusOutlined />} onClick={createNewConversation}>
-              新对话
-            </Button>
+          <Tooltip title="收起侧边栏">
+            <Button
+              type="text"
+              icon={<MenuFoldOutlined />}
+              aria-label="收起侧边栏"
+              onClick={() => setSidebarCollapsed(true)}
+            />
           </Tooltip>
         </div>
+        <div className="workspace-quick-actions">
+          <Button className="workspace-action-row" type="text" icon={<PlusOutlined />} onClick={createNewConversation}>
+            新对话
+          </Button>
+          <Input
+            className="workspace-search"
+            prefix={<SearchOutlined />}
+            value={conversationSearch}
+            onChange={(event) => setConversationSearch(event.target.value)}
+            placeholder="搜索会话标题或内容"
+            allowClear
+          />
+        </div>
+        <nav className="workspace-nav" aria-label="主导航">
+          {navItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={selectedRoute === item.key ? 'workspace-nav-item active' : 'workspace-nav-item'}
+              onClick={() => navigate(item.key)}
+            >
+              <span>{item.icon}</span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="workspace-recents-label">{conversationSearch.trim() ? '搜索结果' : '最近'}</div>
         <div className="conversation-stack" role="list">
           {conversations.length ? (
             conversations.map((item) => (
@@ -492,6 +590,17 @@ export default function ChatWorkspace() {
       </aside>
 
       <section className={`workspace-chat ${hasMessages ? 'has-messages' : 'empty'}`} aria-label="审计 AI 工作台">
+        {sidebarCollapsed && (
+          <Tooltip title="展开侧边栏">
+            <Button
+              className="workspace-sidebar-toggle"
+              type="text"
+              icon={<MenuUnfoldOutlined />}
+              aria-label="展开侧边栏"
+              onClick={() => setSidebarCollapsed(false)}
+            />
+          </Tooltip>
+        )}
         <header className="workspace-chat-head">
           <div className="workspace-title-block">
             <Typography.Title level={3} className="workspace-title">

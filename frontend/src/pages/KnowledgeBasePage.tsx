@@ -2,13 +2,13 @@ import {
   AppstoreOutlined,
   BarsOutlined,
   DeleteOutlined,
+  FolderOpenOutlined,
   MessageOutlined,
   PlusOutlined,
   SearchOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { Button, Form, Input, message, Modal, Radio, Segmented, Space, Table, Tag, Tree, Typography } from 'antd';
-import type { DataNode } from 'antd/es/tree';
+import { Button, Form, Input, message, Modal, Radio, Segmented, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchMe, type UserInfo } from '../api/auth';
@@ -73,17 +73,6 @@ export default function KnowledgeBasePage() {
     return () => window.clearInterval(timer);
   }, [hasProcessingDocuments, selectedKbId]);
 
-  const treeData: DataNode[] = knowledgeBases.map((kb) => ({
-    key: kb.id,
-    title: (
-      <Space size={6} className="kb-tree-title">
-        <Typography.Text ellipsis={{ tooltip: kb.name }}>{kb.name}</Typography.Text>
-        <Tag color={kb.visibility === 'shared' ? 'blue' : 'green'}>
-          {kb.visibility === 'shared' ? '共享' : '个人'}
-        </Tag>
-      </Space>
-    ),
-  }));
   const filtered = useMemo(
     () => documents.filter((doc) => doc.file_name.includes(keyword) || doc.tags.join(',').includes(keyword)),
     [documents, keyword],
@@ -143,17 +132,61 @@ export default function KnowledgeBasePage() {
   return (
     <div className="kb-page">
       <aside className="kb-tree">
-        <Tree
-          treeData={treeData}
-          selectedKeys={selectedKbId ? [selectedKbId] : []}
-          onSelect={(keys) => {
-            if (keys[0]) {
-              setSelectedKbId(String(keys[0]));
-            }
-          }}
-        />
+        <div className="kb-sidebar-head">
+          <div>
+            <Typography.Title level={5}>知识库</Typography.Title>
+            <Typography.Text type="secondary">{knowledgeBases.length} 个资料库</Typography.Text>
+          </div>
+          {user?.role === 'system_admin' && (
+            <Tooltip title="新建知识库">
+              <Button type="text" icon={<PlusOutlined />} aria-label="新建知识库" onClick={() => setCreateOpen(true)} />
+            </Tooltip>
+          )}
+        </div>
+        <div className="kb-list" role="list">
+          {knowledgeBases.map((kb) => (
+            <button
+              key={kb.id}
+              type="button"
+              className={selectedKbId === kb.id ? 'kb-list-item active' : 'kb-list-item'}
+              onClick={() => setSelectedKbId(kb.id)}
+            >
+              <span className="kb-list-icon">
+                <FolderOpenOutlined />
+              </span>
+              <span className="kb-list-copy">
+                <span className="kb-list-name">{kb.name}</span>
+                <span className="kb-list-meta">{kb.visibility === 'shared' ? '共享知识库' : '个人知识库'}</span>
+              </span>
+            </button>
+          ))}
+        </div>
       </aside>
       <section className="kb-main">
+        <div className="kb-hero">
+          <div className="kb-hero-copy">
+            <Space size={8} wrap>
+              <Tag color={selectedKb?.visibility === 'shared' ? 'blue' : 'green'}>
+                {selectedKb?.visibility === 'shared' ? '共享知识库' : '个人知识库'}
+              </Tag>
+              <Typography.Text type="secondary">{filtered.length} / {documents.length} 个文件</Typography.Text>
+            </Space>
+            <Typography.Title level={3}>{selectedKb?.name || '请选择知识库'}</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              {selectedKb?.description || '上传审计底稿、制度、合同和报表后，可在对话中作为可检索材料使用。'}
+            </Typography.Paragraph>
+          </div>
+          <Space wrap className="kb-hero-actions">
+            {selectedKb && (
+              <Button icon={<MessageOutlined />} onClick={openKnowledgeBaseChat}>
+                围绕知识库对话
+              </Button>
+            )}
+            <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+              上传文件
+            </Button>
+          </Space>
+        </div>
         <div className="kb-toolbar">
           <Input
             prefix={<SearchOutlined />}
@@ -169,11 +202,6 @@ export default function KnowledgeBasePage() {
             ]}
             onChange={(value) => setView(value as 'card' | 'list')}
           />
-          {user?.role === 'system_admin' && (
-            <Button icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              新建知识库
-            </Button>
-          )}
           {user?.role === 'system_admin' && selectedKb && (
             <Button
               danger
@@ -201,14 +229,6 @@ export default function KnowledgeBasePage() {
               删除知识库
             </Button>
           )}
-          {selectedKb && (
-            <Button icon={<MessageOutlined />} onClick={openKnowledgeBaseChat}>
-              围绕知识库对话
-            </Button>
-          )}
-          <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
-            上传
-          </Button>
         </div>
         {view === 'card' ? (
           <div className="document-grid">

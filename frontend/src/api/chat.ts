@@ -56,8 +56,9 @@ export function createConversation(payload?: string | ConversationCreatePayload)
   return unwrap<Conversation>(apiClient.post('/chat/conversations', body));
 }
 
-export function fetchConversations() {
-  return unwrap<Conversation[]>(apiClient.get('/chat/conversations'));
+export function fetchConversations(query?: string) {
+  const q = query?.trim();
+  return unwrap<Conversation[]>(apiClient.get('/chat/conversations', q ? { params: { q } } : undefined));
 }
 
 export function fetchConversation(conversationId: string) {
@@ -73,7 +74,7 @@ export function deleteConversation(conversationId: string) {
 }
 
 export function sendMessage(conversationId: string, content: string, kbIds: string[] = [], documentIds: string[] = []) {
-  return unwrap<{ user_message?: ChatMessage; message: ChatMessage }>(
+  return unwrap<{ user_message?: ChatMessage; message: ChatMessage; conversation?: Conversation }>(
     apiClient.post(`/chat/conversations/${conversationId}/messages`, {
       content,
       kb_id: kbIds[0],

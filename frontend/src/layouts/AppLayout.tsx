@@ -73,7 +73,7 @@ export default function AppLayout() {
 
   return (
     <Layout className="app-shell">
-      <Sidebar user={user} />
+      {!isWorkspaceRoute && <Sidebar user={user} />}
       <Layout className={`main-shell ${isWorkspaceRoute ? 'workspace-route' : ''}`}>
         <header className={`topbar ${isWorkspaceRoute ? 'workspace-topbar' : ''}`}>
           <div>

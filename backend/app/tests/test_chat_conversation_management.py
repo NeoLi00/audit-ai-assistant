@@ -25,9 +25,14 @@ def _cleanup_conversation(conversation_id: str) -> None:
 
 def test_first_user_message_generates_short_conversation_title(monkeypatch):
     async def fake_answer_question(*args, **kwargs):
-        return {"answer": "ok", "citations": []}
+        return {"answer": "合同付款条件存在逾期和审批缺失风险。", "citations": []}
+
+    class FakeTitleClient:
+        async def chat(self, messages):
+            return {"answer": "合同付款风险分析"}
 
     monkeypatch.setattr(chat_routes, "answer_question", fake_answer_question)
+    monkeypatch.setattr(chat_routes, "get_llm_client", lambda: FakeTitleClient())
     client = TestClient(app, raise_server_exceptions=False)
 
     with client:
@@ -43,7 +48,38 @@ def test_first_user_message_generates_short_conversation_title(monkeypatch):
 
     try:
         assert response.status_code == 200
-        assert detail["title"] == "请总结这个合同的付款条件和审计风险"
+        assert detail["title"] == "合同付款风险分析"
+    finally:
+        _cleanup_conversation(conversation_id)
+
+
+def test_conversations_can_be_searched_by_title_or_message_content(monkeypatch):
+    async def fake_answer_question(*args, **kwargs):
+        return {"answer": "这份材料讨论 IMAP 连接超时排查。", "citations": []}
+
+    class FakeTitleClient:
+        async def chat(self, messages):
+            return {"answer": "邮箱连接排查"}
+
+    monkeypatch.setattr(chat_routes, "answer_question", fake_answer_question)
+    monkeypatch.setattr(chat_routes, "get_llm_client", lambda: FakeTitleClient())
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with client:
+        headers = _login(client)
+        conversation = client.post("/api/chat/conversations", headers=headers, json={"title": "新会话"}).json()["data"]
+        conversation_id = conversation["id"]
+        client.post(
+            f"/api/chat/conversations/{conversation_id}/messages",
+            headers=headers,
+            json={"content": "帮我排查 IMAP idle timeout 的原因"},
+        )
+        by_title = client.get("/api/chat/conversations", headers=headers, params={"q": "邮箱连接"}).json()["data"]
+        by_message = client.get("/api/chat/conversations", headers=headers, params={"q": "idle timeout"}).json()["data"]
+
+    try:
+        assert any(item["id"] == conversation_id for item in by_title)
+        assert any(item["id"] == conversation_id for item in by_message)
     finally:
         _cleanup_conversation(conversation_id)
 
