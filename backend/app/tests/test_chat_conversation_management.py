@@ -220,3 +220,89 @@ def test_conversation_scope_document_ids_are_passed_to_answer_service(monkeypatc
         assert captured["document_ids"] == ["doc-1"]
     finally:
         _cleanup_conversation(conversation_id)
+
+
+def test_assistant_message_can_be_regenerated_without_duplicating_user_message(monkeypatch):
+    answers = iter(["第一次回答", "重新生成回答"])
+    captured_kb_ids: list[list[str] | None] = []
+
+    async def fake_answer_question(*args, **kwargs):
+        captured_kb_ids.append(kwargs.get("kb_ids"))
+        return {"answer": next(answers), "citations": []}
+
+    monkeypatch.setattr(chat_routes, "answer_question", fake_answer_question)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with client:
+        headers = _login(client)
+        conversation = client.post("/api/chat/conversations", headers=headers, json={"title": "重生测试"}).json()[
+            "data"
+        ]
+        conversation_id = conversation["id"]
+        first = client.post(
+            f"/api/chat/conversations/{conversation_id}/messages",
+            headers=headers,
+            json={"content": "重新生成这轮", "kb_ids": ["kb-old"]},
+        ).json()["data"]
+        assistant_id = first["message"]["id"]
+
+        regenerated = client.post(
+            f"/api/chat/conversations/{conversation_id}/messages/{assistant_id}/regenerate",
+            headers=headers,
+            json={"kb_ids": ["kb-new"]},
+        )
+        messages = regenerated.json()["data"]["messages"]
+
+    try:
+        assert regenerated.status_code == 200
+        assert [message["role"] for message in messages] == ["user", "assistant"]
+        assert messages[0]["content"] == "重新生成这轮"
+        assert messages[1]["content"] == "重新生成回答"
+        assert messages[1]["id"] != assistant_id
+        assert captured_kb_ids == [["kb-old"], ["kb-new"]]
+    finally:
+        _cleanup_conversation(conversation_id)
+
+
+def test_editing_user_message_prunes_later_turns_and_reruns_answer(monkeypatch):
+    answers = iter(["第一轮旧回答", "第二轮旧回答", "第一轮新回答"])
+
+    async def fake_answer_question(*args, **kwargs):
+        return {"answer": next(answers), "citations": []}
+
+    monkeypatch.setattr(chat_routes, "answer_question", fake_answer_question)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with client:
+        headers = _login(client)
+        conversation = client.post("/api/chat/conversations", headers=headers, json={"title": "编辑测试"}).json()[
+            "data"
+        ]
+        conversation_id = conversation["id"]
+        first = client.post(
+            f"/api/chat/conversations/{conversation_id}/messages",
+            headers=headers,
+            json={"content": "旧问题"},
+        ).json()["data"]
+        user_id = first["user_message"]["id"]
+        client.post(
+            f"/api/chat/conversations/{conversation_id}/messages",
+            headers=headers,
+            json={"content": "后续问题"},
+        )
+
+        edited = client.patch(
+            f"/api/chat/conversations/{conversation_id}/messages/{user_id}",
+            headers=headers,
+            json={"content": "新问题"},
+        )
+        messages = edited.json()["data"]["messages"]
+
+    try:
+        assert edited.status_code == 200
+        assert [message["role"] for message in messages] == ["user", "assistant"]
+        assert messages[0]["id"] == user_id
+        assert messages[0]["content"] == "新问题"
+        assert messages[1]["content"] == "第一轮新回答"
+    finally:
+        _cleanup_conversation(conversation_id)

@@ -1,8 +1,10 @@
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  CopyOutlined,
   DeleteOutlined,
   DislikeOutlined,
+  DownloadOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
   LikeOutlined,
@@ -10,7 +12,6 @@ import {
   PaperClipOutlined,
   PlusOutlined,
   ReloadOutlined,
-  WarningOutlined,
 } from '@ant-design/icons';
 import { Button, Empty, Input, message, Modal, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -19,8 +20,10 @@ import {
   createConversation,
   deleteConversation,
   deleteTempFile,
+  editMessageAndRegenerate,
   fetchConversation,
   fetchConversations,
+  regenerateAssistantMessage,
   sendFeedback,
   sendMessage,
   updateConversationTitle,
@@ -58,6 +61,9 @@ export default function ChatWorkspace() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editingConversationId, setEditingConversationId] = useState<string>();
   const [editingTitle, setEditingTitle] = useState('');
+  const [editingMessageId, setEditingMessageId] = useState<string>();
+  const [editingMessageContent, setEditingMessageContent] = useState('');
+  const [actionMessageId, setActionMessageId] = useState<string>();
   const initialQuerySent = useRef(false);
   const initialUploadOpened = useRef(false);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
@@ -68,15 +74,31 @@ export default function ChatWorkspace() {
     return selectedKbIds.map((id) => byId.get(id)).filter(Boolean) as string[];
   }, [knowledgeBases, selectedKbIds]);
 
-  const loadConversation = useCallback(async (id: string) => {
-    const conversation = await fetchConversation(id);
+  const applyConversation = useCallback((conversation: Conversation) => {
     setActive(conversation);
     setMessages(conversation.messages || []);
     setTempFiles(conversation.temp_files || []);
+    setConversations((items) =>
+      items.map((item) =>
+        item.id === conversation.id
+          ? {
+              ...item,
+              title: conversation.title,
+              updated_at: conversation.updated_at,
+              scope: conversation.scope,
+            }
+          : item,
+      ),
+    );
+  }, []);
+
+  const loadConversation = useCallback(async (id: string) => {
+    const conversation = await fetchConversation(id);
+    applyConversation(conversation);
     if (conversation.scope?.kb_ids?.length) {
       setSelectedKbIds(conversation.scope.kb_ids);
     }
-  }, []);
+  }, [applyConversation]);
 
   const bootstrap = useCallback(async () => {
     try {
@@ -241,6 +263,81 @@ export default function ChatWorkspace() {
   const feedback = async (messageId: string, type: string) => {
     await sendFeedback(messageId, type);
     message.success('反馈已记录');
+  };
+
+  const copyAssistantOutput = async (item: ChatMessage) => {
+    try {
+      await navigator.clipboard.writeText(item.content);
+      message.success('已复制');
+    } catch {
+      message.error('复制失败，请手动选择文本');
+    }
+  };
+
+  const exportAssistantOutput = (item: ChatMessage) => {
+    const fileTitle = sanitizeFileName(active?.title || 'assistant-output');
+    const content = `${active?.title || '审计 AI 助手'}\n\n${item.content}\n`;
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${fileTitle}-${formatExportTime(new Date(item.created_at))}.md`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const regenerateAnswer = async (item: ChatMessage) => {
+    if (!active) return;
+    setActionMessageId(item.id);
+    setLoading(true);
+    try {
+      const documentIds = active.scope?.document_ids || [];
+      const effectiveKbIds = documentIds.length ? active.scope?.kb_ids || [] : selectedKbIds;
+      const conversation = await regenerateAssistantMessage(active.id, item.id, effectiveKbIds, documentIds);
+      applyConversation(conversation);
+      message.success('已重新生成');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '重新生成失败');
+    } finally {
+      setActionMessageId(undefined);
+      setLoading(false);
+    }
+  };
+
+  const startEditingUserMessage = (item: ChatMessage) => {
+    setEditingMessageId(item.id);
+    setEditingMessageContent(item.content);
+  };
+
+  const cancelEditingUserMessage = () => {
+    setEditingMessageId(undefined);
+    setEditingMessageContent('');
+  };
+
+  const saveUserMessageAndRegenerate = async (item: ChatMessage) => {
+    if (!active) return;
+    const content = editingMessageContent.trim();
+    if (!content) {
+      message.warning('问题不能为空');
+      return;
+    }
+    setActionMessageId(item.id);
+    setLoading(true);
+    try {
+      const documentIds = active.scope?.document_ids || [];
+      const effectiveKbIds = documentIds.length ? active.scope?.kb_ids || [] : selectedKbIds;
+      const conversation = await editMessageAndRegenerate(active.id, item.id, content, effectiveKbIds, documentIds);
+      applyConversation(conversation);
+      cancelEditingUserMessage();
+      message.success('已根据新问题重新生成');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '编辑重问失败');
+    } finally {
+      setActionMessageId(undefined);
+      setLoading(false);
+    }
   };
 
   const saveConversationTitle = async (conversation: Conversation) => {
@@ -420,7 +517,32 @@ export default function ChatWorkspace() {
           )}
           {messages.map((item) => (
             <article key={item.id} className={`message-bubble ${item.role}`}>
-              <MessageText content={item.content} />
+              {item.role === 'user' && editingMessageId === item.id ? (
+                <div className="message-edit-panel">
+                  <Input.TextArea
+                    value={editingMessageContent}
+                    onChange={(event) => setEditingMessageContent(event.target.value)}
+                    autoSize={{ minRows: 2, maxRows: 8 }}
+                    autoFocus
+                  />
+                  <Space size={6} className="message-edit-actions">
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<CheckCircleOutlined />}
+                      loading={actionMessageId === item.id}
+                      onClick={() => saveUserMessageAndRegenerate(item)}
+                    >
+                      保存并重新回答
+                    </Button>
+                    <Button size="small" icon={<CloseCircleOutlined />} onClick={cancelEditingUserMessage}>
+                      取消
+                    </Button>
+                  </Space>
+                </div>
+              ) : (
+                <MessageText content={item.content} />
+              )}
               {item.attachments && item.attachments.length > 0 && (
                 <div className="message-attachment-list">
                   {item.attachments.map((file) => (
@@ -428,19 +550,62 @@ export default function ChatWorkspace() {
                   ))}
                 </div>
               )}
+              {item.role === 'user' && editingMessageId !== item.id && (
+                <Space className="message-actions user-actions" size={4}>
+                  <Tooltip title="编辑问题并重新回答">
+                    <Button
+                      size="small"
+                      icon={<EditOutlined />}
+                      aria-label="编辑问题并重新回答"
+                      disabled={loading}
+                      onClick={() => startEditingUserMessage(item)}
+                    />
+                  </Tooltip>
+                </Space>
+              )}
               {item.role === 'assistant' && (
                 <Space className="message-actions" size={4}>
+                  <Tooltip title="复制">
+                    <Button
+                      size="small"
+                      icon={<CopyOutlined />}
+                      aria-label="复制回答"
+                      onClick={() => copyAssistantOutput(item)}
+                    />
+                  </Tooltip>
+                  <Tooltip title="导出当前回答">
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      aria-label="导出当前回答"
+                      onClick={() => exportAssistantOutput(item)}
+                    />
+                  </Tooltip>
                   <Tooltip title="有帮助">
-                    <Button size="small" icon={<LikeOutlined />} onClick={() => feedback(item.id, 'like')} />
+                    <Button
+                      size="small"
+                      icon={<LikeOutlined />}
+                      aria-label="回答有帮助"
+                      onClick={() => feedback(item.id, 'like')}
+                    />
                   </Tooltip>
                   <Tooltip title="没帮助">
-                    <Button size="small" icon={<DislikeOutlined />} onClick={() => feedback(item.id, 'dislike')} />
-                  </Tooltip>
-                  <Tooltip title="引用有误">
-                    <Button size="small" icon={<WarningOutlined />} onClick={() => feedback(item.id, 'citation_error')} />
+                    <Button
+                      size="small"
+                      icon={<DislikeOutlined />}
+                      aria-label="回答没帮助"
+                      onClick={() => feedback(item.id, 'dislike')}
+                    />
                   </Tooltip>
                   <Tooltip title="重新生成">
-                    <Button size="small" icon={<ReloadOutlined />} onClick={() => feedback(item.id, 'regenerate')} />
+                    <Button
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      aria-label="重新生成回答"
+                      loading={actionMessageId === item.id}
+                      disabled={loading && actionMessageId !== item.id}
+                      onClick={() => regenerateAnswer(item)}
+                    />
                   </Tooltip>
                 </Space>
               )}
@@ -563,6 +728,20 @@ function formatShortTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function sanitizeFileName(value: string) {
+  return value.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '-').slice(0, 60) || 'assistant-output';
+}
+
+function formatExportTime(date: Date) {
+  if (Number.isNaN(date.getTime())) {
+    return 'unknown-time';
+  }
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(
+    date.getMinutes(),
+  )}`;
 }
 
 function ChatAttachment({

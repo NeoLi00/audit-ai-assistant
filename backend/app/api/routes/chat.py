@@ -8,7 +8,14 @@ from app.api.routes.auth import get_current_user
 from app.core.config import get_settings
 from app.db.models import Conversation, Message, TempFile, User
 from app.db.session import get_db
-from app.schemas.chat import ChatMessageCreate, ConversationCreate, ConversationUpdate, FeedbackCreate
+from app.schemas.chat import (
+    ChatMessageCreate,
+    ChatMessageUpdate,
+    ChatRegenerateRequest,
+    ConversationCreate,
+    ConversationUpdate,
+    FeedbackCreate,
+)
 from app.schemas.common import ok
 from app.services.audit.audit_logger import log_action, text_digest
 from app.services.chat_context.context_manager import ChatContextManager
@@ -135,46 +142,114 @@ async def create_message(
     db.commit()
     log_action(db, "用户提问", current_user.id, "conversation", conversation_id, text_digest(payload.content))
 
-    scope = _conversation_scope(conversation)
-    effective_kb_ids = payload.kb_ids or scope.get("kb_ids", [])
-    effective_document_ids = payload.document_ids or scope.get("document_ids", [])
-    effective_kb_id = payload.kb_id or (effective_kb_ids[0] if effective_kb_ids else None)
-
-    deterministic_answer = _try_temp_excel_analysis(ready_files, payload.content)
-    if deterministic_answer:
-        answer = deterministic_answer + "\n\n以上为 pandas 确定性计算结果，建议结合原始 Excel 核对。"
-        citations = []
-    else:
-        result = await answer_question(
-            db,
-            payload.content,
-            kb_id=effective_kb_id,
-            kb_ids=effective_kb_ids,
-            document_ids=effective_document_ids,
-            mode="normal",
-            uploaded_files=_temp_file_context(ready_files),
-            conversation_id=conversation_id,
-            current_message_id=user_message.id,
-            current_user=current_user,
-        )
-        answer = result["answer"]
-        citations = result["citations"]
-
-    assistant_message = Message(
-        conversation_id=conversation_id,
-        role="assistant",
-        content=answer,
-        citations_json=citations,
+    assistant_message = await _generate_assistant_for_user_message(
+        db,
+        conversation,
+        user_message,
+        current_user,
+        kb_id=payload.kb_id,
+        kb_ids=payload.kb_ids,
+        document_ids=payload.document_ids,
+        mode=payload.mode,
+        uploaded_files=ready_files,
     )
-    db.add(assistant_message)
-    db.commit()
-    ChatContextManager().update_memory(db, conversation_id)
     return ok(
         {
             "user_message": _message_dict(user_message, attachments=[_temp_file_dict(item) for item in pending_files]),
             "message": _message_dict(assistant_message),
         }
     )
+
+
+@router.patch("/conversations/{conversation_id}/messages/{message_id}")
+async def edit_user_message_and_regenerate(
+    conversation_id: str,
+    message_id: str,
+    payload: ChatMessageUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    conversation = _owned_conversation(db, conversation_id, current_user)
+    user_message = db.get(Message, message_id)
+    if not user_message or user_message.conversation_id != conversation_id or user_message.role != "user":
+        raise HTTPException(status_code=404, detail="用户消息不存在")
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    messages = _ordered_messages(db, conversation_id)
+    target_index = _message_index(messages, message_id)
+    if target_index is None:
+        raise HTTPException(status_code=404, detail="用户消息不存在")
+    old_content = user_message.content
+    user_message.content = content
+    if target_index == 0 and (
+        _is_default_conversation_title(conversation.title)
+        or conversation.title.strip() == _title_from_question(old_content)
+    ):
+        conversation.title = _title_from_question(content)
+    _delete_messages_and_attached_temp_files(db, conversation, messages[target_index + 1 :])
+    _clear_conversation_memory(db, conversation)
+    db.commit()
+
+    await _generate_assistant_for_user_message(
+        db,
+        conversation,
+        user_message,
+        current_user,
+        kb_id=payload.kb_id,
+        kb_ids=payload.kb_ids,
+        document_ids=payload.document_ids,
+        mode=payload.mode,
+        uploaded_files=_temp_files_for_message(db, conversation_id, user_message.id),
+    )
+    log_action(db, "编辑问题并重新生成", current_user.id, "message", user_message.id, text_digest(content))
+    db.refresh(conversation)
+    return ok(_conversation_dict(conversation, include_messages=True))
+
+
+@router.post("/conversations/{conversation_id}/messages/{message_id}/regenerate")
+async def regenerate_assistant_message(
+    conversation_id: str,
+    message_id: str,
+    payload: ChatRegenerateRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    conversation = _owned_conversation(db, conversation_id, current_user)
+    assistant_message = db.get(Message, message_id)
+    if (
+        not assistant_message
+        or assistant_message.conversation_id != conversation_id
+        or assistant_message.role != "assistant"
+    ):
+        raise HTTPException(status_code=404, detail="助手消息不存在")
+
+    messages = _ordered_messages(db, conversation_id)
+    assistant_index = _message_index(messages, message_id)
+    if assistant_index is None:
+        raise HTTPException(status_code=404, detail="助手消息不存在")
+    user_message = next((message for message in reversed(messages[:assistant_index]) if message.role == "user"), None)
+    if not user_message:
+        raise HTTPException(status_code=400, detail="找不到可重新生成的用户问题")
+
+    _delete_messages_and_attached_temp_files(db, conversation, messages[assistant_index:])
+    _clear_conversation_memory(db, conversation)
+    db.commit()
+    assistant_message = await _generate_assistant_for_user_message(
+        db,
+        conversation,
+        user_message,
+        current_user,
+        kb_id=payload.kb_id if payload else None,
+        kb_ids=payload.kb_ids if payload else None,
+        document_ids=payload.document_ids if payload else None,
+        mode=payload.mode if payload else "normal",
+        uploaded_files=_temp_files_for_message(db, conversation_id, user_message.id),
+    )
+    log_action(db, "重新生成回答", current_user.id, "message", assistant_message.id, {"source_message_id": message_id})
+    db.refresh(conversation)
+    return ok(_conversation_dict(conversation, include_messages=True))
 
 
 @router.post("/conversations/{conversation_id}/temp-files")
@@ -255,9 +330,115 @@ def feedback(
     return ok({"received": True})
 
 
+def _owned_conversation(db: Session, conversation_id: str, current_user: User) -> Conversation:
+    conversation = db.get(Conversation, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return conversation
+
+
+def _ordered_messages(db: Session, conversation_id: str) -> list[Message]:
+    return (
+        db.query(Message)
+        .filter(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc(), Message.id.asc())
+        .all()
+    )
+
+
+def _message_index(messages: list[Message], message_id: str) -> int | None:
+    for index, message in enumerate(messages):
+        if message.id == message_id:
+            return index
+    return None
+
+
+def _delete_messages_and_attached_temp_files(
+    db: Session,
+    conversation: Conversation,
+    messages: list[Message],
+) -> None:
+    deleted_message_ids = {message.id for message in messages}
+    if not deleted_message_ids:
+        return
+    storage = ObjectStorage()
+    for temp_file in list(conversation.temp_files):
+        if (temp_file.metadata_json or {}).get("used_message_id") in deleted_message_ids:
+            if temp_file.minio_object_key:
+                storage.remove(temp_file.minio_object_key)
+            db.delete(temp_file)
+    for message in messages:
+        db.delete(message)
+
+
+def _clear_conversation_memory(db: Session, conversation: Conversation) -> None:
+    if conversation.memory:
+        db.delete(conversation.memory)
+
+
+async def _generate_assistant_for_user_message(
+    db: Session,
+    conversation: Conversation,
+    user_message: Message,
+    current_user: User,
+    kb_id: str | None = None,
+    kb_ids: list[str] | None = None,
+    document_ids: list[str] | None = None,
+    mode: str = "normal",
+    uploaded_files: list[TempFile] | None = None,
+) -> Message:
+    attached_files = uploaded_files or []
+    scope = _conversation_scope(conversation)
+    effective_kb_ids = kb_ids or scope.get("kb_ids", [])
+    effective_document_ids = document_ids or scope.get("document_ids", [])
+    effective_kb_id = kb_id or (effective_kb_ids[0] if effective_kb_ids else None)
+
+    deterministic_answer = _try_temp_excel_analysis(attached_files, user_message.content)
+    if deterministic_answer:
+        answer = deterministic_answer + "\n\n以上为 pandas 确定性计算结果，建议结合原始 Excel 核对。"
+        citations = []
+    else:
+        result = await answer_question(
+            db,
+            user_message.content,
+            kb_id=effective_kb_id,
+            kb_ids=effective_kb_ids,
+            document_ids=effective_document_ids,
+            mode="normal",
+            uploaded_files=_temp_file_context(attached_files),
+            conversation_id=conversation.id,
+            current_message_id=user_message.id,
+            current_user=current_user,
+        )
+        answer = result["answer"]
+        citations = result["citations"]
+
+    assistant_message = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=answer,
+        citations_json=citations,
+    )
+    db.add(assistant_message)
+    db.commit()
+    ChatContextManager().update_memory(db, conversation.id)
+    db.refresh(assistant_message)
+    return assistant_message
+
+
 def _pending_temp_files(db: Session, conversation_id: str) -> list[TempFile]:
     files = db.query(TempFile).filter(TempFile.conversation_id == conversation_id).order_by(TempFile.created_at).all()
     return [item for item in files if not (item.metadata_json or {}).get("used_message_id")]
+
+
+def _temp_files_for_message(db: Session, conversation_id: str, message_id: str) -> list[TempFile]:
+    files = (
+        db.query(TempFile)
+        .filter(TempFile.conversation_id == conversation_id)
+        .order_by(TempFile.created_at)
+        .all()
+    )
+    return [item for item in files if (item.metadata_json or {}).get("used_message_id") == message_id]
 
 
 def _temp_file_context(files: list[TempFile]) -> list[dict]:

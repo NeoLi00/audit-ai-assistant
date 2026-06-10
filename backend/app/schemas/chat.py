@@ -17,6 +17,21 @@ class ChatMessageCreate(BaseModel):
     mode: str = "normal"
 
 
+class ChatMessageUpdate(BaseModel):
+    content: str
+    kb_id: str | None = None
+    kb_ids: list[str] = []
+    document_ids: list[str] = []
+    mode: str = "normal"
+
+
+class ChatRegenerateRequest(BaseModel):
+    kb_id: str | None = None
+    kb_ids: list[str] = []
+    document_ids: list[str] = []
+    mode: str = "normal"
+
+
 class ConversationUpdate(BaseModel):
     title: str
 

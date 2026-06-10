@@ -83,6 +83,38 @@ export function sendMessage(conversationId: string, content: string, kbIds: stri
   );
 }
 
+export function editMessageAndRegenerate(
+  conversationId: string,
+  messageId: string,
+  content: string,
+  kbIds: string[] = [],
+  documentIds: string[] = [],
+) {
+  return unwrap<Conversation>(
+    apiClient.patch(`/chat/conversations/${conversationId}/messages/${messageId}`, {
+      content,
+      kb_id: kbIds[0],
+      kb_ids: kbIds,
+      document_ids: documentIds,
+    }),
+  );
+}
+
+export function regenerateAssistantMessage(
+  conversationId: string,
+  messageId: string,
+  kbIds: string[] = [],
+  documentIds: string[] = [],
+) {
+  return unwrap<Conversation>(
+    apiClient.post(`/chat/conversations/${conversationId}/messages/${messageId}/regenerate`, {
+      kb_id: kbIds[0],
+      kb_ids: kbIds,
+      document_ids: documentIds,
+    }),
+  );
+}
+
 export function uploadTempFile(conversationId: string, formData: FormData) {
   return unwrap<TempFile>(
     apiClient.post(`/chat/conversations/${conversationId}/temp-files`, formData, {

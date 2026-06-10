@@ -530,12 +530,38 @@ textarea {
   margin-top: 10px;
 }
 
+.message-actions.user-actions {
+  width: 100%;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
 .message-actions .ant-btn {
   width: 32px;
   height: 32px;
   border-radius: 999px !important;
   border-color: transparent;
   color: #777772;
+}
+
+.message-edit-panel {
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-edit-panel textarea {
+  border-radius: 16px !important;
+  line-height: 1.6;
+}
+
+.message-edit-actions {
+  justify-content: flex-end;
+}
+
+.message-edit-actions .ant-btn {
+  min-width: 0;
 }
 
 .workspace-loading {
