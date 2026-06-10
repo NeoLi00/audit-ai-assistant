@@ -1,8 +1,10 @@
-import { SaveOutlined, SyncOutlined } from '@ant-design/icons';
-import { Button, Card, Descriptions, Empty, Input, message, Space, Tag, Typography } from 'antd';
+import { DeleteOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
+import { Button, Card, Descriptions, Empty, Input, message, Modal, Space, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { fetchMe, type UserInfo } from '../api/auth';
 import {
+  deleteDocument,
   fetchDocument,
   fetchDocumentBlocks,
   fetchDocumentChunks,
@@ -13,6 +15,7 @@ import {
 import type { DocumentItem } from '../api/kb';
 
 export default function DocumentDetailPage() {
+  const navigate = useNavigate();
   const { documentId = '' } = useParams();
   const [searchParams] = useSearchParams();
   const chunkId = searchParams.get('chunkId');
@@ -20,6 +23,7 @@ export default function DocumentDetailPage() {
   const [blocks, setBlocks] = useState<DocumentBlock[]>([]);
   const [chunks, setChunks] = useState<DocumentChunk[]>([]);
   const [correction, setCorrection] = useState('');
+  const [user, setUser] = useState<UserInfo | null>(null);
 
   const load = useCallback(async () => {
     const [doc, blockItems, chunkItems] = await Promise.all([
@@ -36,25 +40,65 @@ export default function DocumentDetailPage() {
     load().catch(() => message.error('文档加载失败'));
   }, [load]);
 
+  useEffect(() => {
+    fetchMe().then(setUser).catch(() => setUser(null));
+  }, []);
+
   const highlightedChunk = useMemo(() => chunks.find((chunk) => chunk.id === chunkId), [chunks, chunkId]);
+  const canDeleteDocument =
+    document &&
+    (user?.role === 'system_admin' || (document.visibility === 'private' && document.uploaded_by === user?.id));
 
   if (!document) return <Empty description="文档不存在或加载中" />;
 
   return (
     <div className="document-detail">
       <Card>
-        <Descriptions title={document.file_name} column={3}>
-          <Descriptions.Item label="类型">{document.file_ext}</Descriptions.Item>
-          <Descriptions.Item label="分类">{document.department_category}</Descriptions.Item>
-          <Descriptions.Item label="业务类型">{document.business_type}</Descriptions.Item>
-          <Descriptions.Item label="标签">{document.tags.join(', ') || '-'}</Descriptions.Item>
-          <Descriptions.Item label="版本">{document.version}</Descriptions.Item>
-          <Descriptions.Item label="状态">
-            <Tag color={document.status === 'indexed' ? 'green' : document.status === 'need_review' ? 'gold' : 'blue'}>
-              {document.status}
-            </Tag>
-          </Descriptions.Item>
-        </Descriptions>
+        <Space direction="vertical" className="full-width">
+          <Space className="full-width" style={{ justifyContent: 'space-between' }}>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              {document.file_name}
+            </Typography.Title>
+            {canDeleteDocument ? (
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => {
+                  Modal.confirm({
+                    title: `删除文件：${document.file_name}`,
+                    content: '文件、解析块、chunk、关键词索引和向量索引都会一起删除。',
+                    okText: '删除',
+                    okButtonProps: { danger: true },
+                    cancelText: '取消',
+                    onOk: async () => {
+                      try {
+                        await deleteDocument(document.id);
+                        message.success('文件已删除');
+                        navigate('/kb');
+                      } catch (error) {
+                        message.error(error instanceof Error ? error.message : '删除失败');
+                      }
+                    },
+                  });
+                }}
+              >
+                删除文件
+              </Button>
+            ) : null}
+          </Space>
+          <Descriptions column={3}>
+            <Descriptions.Item label="类型">{document.file_ext}</Descriptions.Item>
+            <Descriptions.Item label="分类">{document.department_category}</Descriptions.Item>
+            <Descriptions.Item label="业务类型">{document.business_type}</Descriptions.Item>
+            <Descriptions.Item label="标签">{document.tags.join(', ') || '-'}</Descriptions.Item>
+            <Descriptions.Item label="版本">{document.version}</Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <Tag color={document.status === 'indexed' ? 'green' : document.status === 'need_review' ? 'gold' : 'blue'}>
+                {document.status}
+              </Tag>
+            </Descriptions.Item>
+          </Descriptions>
+        </Space>
       </Card>
       {highlightedChunk && (
         <Card className="highlight-card" title="引用命中片段">

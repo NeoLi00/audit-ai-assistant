@@ -9,7 +9,7 @@ from time import monotonic
 
 from app.core.config import Settings, get_settings
 from app.services.parser.base import ParsedBlock, ParseResult
-from app.services.parser.libreoffice_converter import convert_doc_to_docx
+from app.services.parser.libreoffice_converter import convert_doc_to_docx, convert_doc_to_pdf
 
 _mineru_lock = Lock()
 
@@ -156,10 +156,17 @@ class MinerUParser:
     def _prepare_source(self, path: Path) -> Path | ParseResult:
         ext = path.suffix.lower()
         if ext == ".doc":
+            errors = []
+            try:
+                return convert_doc_to_pdf(path)
+            except Exception as exc:
+                errors.append(f"PDF 转换失败：{exc}")
             try:
                 return convert_doc_to_docx(path)
             except Exception as exc:
-                return ParseResult(status="need_review", error_message=f".doc 转换失败，MinerU 无法处理：{exc}")
+                errors.append(f"DOCX 转换失败：{exc}")
+                error_message = f".doc 转换失败，MinerU 无法处理：{'；'.join(errors)}"
+                return ParseResult(status="need_review", error_message=error_message)
         if ext == ".xls":
             return ParseResult(status="need_review", error_message="MinerU 本地解析建议使用 .xlsx，请先转换后上传。")
         return path

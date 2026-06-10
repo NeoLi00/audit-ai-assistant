@@ -52,3 +52,7 @@ export function uploadDocument(formData: FormData) {
 export function submitOcrCorrection(documentId: string, text: string) {
   return unwrap<Record<string, unknown>>(apiClient.post(`/documents/${documentId}/ocr-correction`, { text }));
 }
+
+export function deleteDocument(documentId: string) {
+  return unwrap<{ deleted: string }>(apiClient.delete(`/documents/${documentId}`));
+}

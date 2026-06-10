@@ -1,5 +1,5 @@
-import { FileDoneOutlined, FileTextOutlined } from '@ant-design/icons';
-import { Card, Space, Tag, Typography } from 'antd';
+import { DeleteOutlined, FileDoneOutlined, FileTextOutlined } from '@ant-design/icons';
+import { Button, Card, Space, Tag, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import type { DocumentItem } from '../api/kb';
 
@@ -17,9 +17,10 @@ const STATUS_COLOR: Record<string, string> = {
 
 type DocumentCardProps = {
   document: DocumentItem;
+  onDelete?: (document: DocumentItem) => void;
 };
 
-export default function DocumentCard({ document }: DocumentCardProps) {
+export default function DocumentCard({ document, onDelete }: DocumentCardProps) {
   const navigate = useNavigate();
 
   return (
@@ -42,8 +43,19 @@ export default function DocumentCard({ document }: DocumentCardProps) {
             版本 {document.version} · {document.is_current_version ? '当前版本' : '历史版本'}
           </Typography.Text>
         </Space>
+        {onDelete ? (
+          <Button
+            danger
+            type="text"
+            icon={<DeleteOutlined />}
+            aria-label="删除文件"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(document);
+            }}
+          />
+        ) : null}
       </Space>
     </Card>
   );
 }
-

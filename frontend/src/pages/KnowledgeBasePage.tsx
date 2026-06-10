@@ -6,7 +6,7 @@ import {
   SearchOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { Button, Form, Input, message, Modal, Segmented, Space, Table, Tag, Tree, Typography } from 'antd';
+import { Button, Form, Input, message, Modal, Radio, Segmented, Space, Table, Tag, Tree, Typography } from 'antd';
 import type { DataNode } from 'antd/es/tree';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -19,6 +19,7 @@ import {
   type DocumentItem,
   type KnowledgeBase,
 } from '../api/kb';
+import { deleteDocument } from '../api/documents';
 import ChatInput from '../components/ChatInput';
 import DocumentCard from '../components/DocumentCard';
 import UploadModal from '../components/UploadModal';
@@ -90,6 +91,33 @@ export default function KnowledgeBasePage() {
     () => knowledgeBases.find((kb) => kb.id === selectedKbId),
     [knowledgeBases, selectedKbId],
   );
+  const canDeleteDocument = (document: DocumentItem) =>
+    user?.role === 'system_admin' ||
+    (document.visibility === 'private' && (document.uploaded_by === user?.id || selectedKb?.created_by === user?.id));
+
+  const refreshDocuments = () => {
+    if (!selectedKbId) return Promise.resolve();
+    return fetchKbDocuments(selectedKbId).then(setDocuments).catch(() => setDocuments([]));
+  };
+
+  const confirmDeleteDocument = (document: DocumentItem) => {
+    Modal.confirm({
+      title: `删除文件：${document.file_name}`,
+      content: '文件、解析块、chunk、关键词索引和向量索引都会一起删除。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deleteDocument(document.id);
+          message.success('文件已删除');
+          await refreshDocuments();
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '删除失败');
+        }
+      },
+    });
+  };
 
   return (
     <div className="kb-page">
@@ -122,7 +150,7 @@ export default function KnowledgeBasePage() {
           />
           {user?.role === 'system_admin' && (
             <Button icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              新建共享知识库
+              新建知识库
             </Button>
           )}
           {user?.role === 'system_admin' && selectedKb && (
@@ -159,7 +187,11 @@ export default function KnowledgeBasePage() {
         {view === 'card' ? (
           <div className="document-grid">
             {filtered.map((document) => (
-              <DocumentCard key={document.id} document={document} />
+              <DocumentCard
+                key={document.id}
+                document={document}
+                onDelete={canDeleteDocument(document) ? confirmDeleteDocument : undefined}
+              />
             ))}
           </div>
         ) : (
@@ -174,6 +206,16 @@ export default function KnowledgeBasePage() {
               { title: '业务类型', dataIndex: 'business_type' },
               { title: '状态', dataIndex: 'status' },
               { title: '上传时间', dataIndex: 'created_at' },
+              {
+                title: '操作',
+                width: 100,
+                render: (_, document: DocumentItem) =>
+                  canDeleteDocument(document) ? (
+                    <Button danger type="link" icon={<DeleteOutlined />} onClick={() => confirmDeleteDocument(document)}>
+                      删除
+                    </Button>
+                  ) : null,
+              },
             ]}
           />
         )}
@@ -197,17 +239,17 @@ export default function KnowledgeBasePage() {
         }
         selectedKbId={selectedKbId}
         onClose={() => setUploadOpen(false)}
-        onUploaded={() => selectedKbId && fetchKbDocuments(selectedKbId).then(setDocuments)}
+        onUploaded={refreshDocuments}
       />
       <Modal
-        title="新建共享知识库"
+        title="新建知识库"
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={async () => {
           const values = await form.validateFields();
           try {
-            await createKnowledgeBase({ ...values, visibility: 'shared' });
-            message.success('共享知识库已创建');
+            await createKnowledgeBase({ ...values, visibility: values.visibility || 'private' });
+            message.success('知识库已创建');
             setCreateOpen(false);
             form.resetFields();
             await loadKnowledgeBases();
@@ -222,6 +264,14 @@ export default function KnowledgeBasePage() {
           </Form.Item>
           <Form.Item name="description" label="说明">
             <Input.TextArea autoSize={{ minRows: 3, maxRows: 6 }} />
+          </Form.Item>
+          <Form.Item name="visibility" label="类型" initialValue="private">
+            <Radio.Group
+              options={[
+                { label: '个人知识库', value: 'private' },
+                { label: '共享知识库', value: 'shared' },
+              ]}
+            />
           </Form.Item>
         </Form>
       </Modal>

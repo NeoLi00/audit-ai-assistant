@@ -1,6 +1,11 @@
 from fastapi.testclient import TestClient
 
+from app.api.routes import document as document_routes
+from app.core import config as core_config
+from app.db.models import Document, DocumentBlock, DocumentChunk
+from app.db.session import SessionLocal
 from app.main import app
+from app.services.indexing import keyword_indexer, vector_indexer
 from app.services.model_gateway import runtime_config
 
 
@@ -35,6 +40,69 @@ def test_system_admin_can_delete_knowledge_base():
 
     assert deleted.status_code == 200
     assert deleted.json()["data"]["deleted"] == created["id"]
+
+
+def test_system_admin_can_delete_document_and_indexes(tmp_path, monkeypatch):
+    deleted_keyword: list[str] = []
+    deleted_vector: list[str] = []
+
+    monkeypatch.setattr(
+        core_config,
+        "get_settings",
+        lambda: core_config.Settings(local_storage_dir=tmp_path, use_local_storage_fallback=True),
+    )
+    monkeypatch.setattr(
+        document_routes,
+        "get_settings",
+        lambda: core_config.Settings(local_storage_dir=tmp_path, use_local_storage_fallback=True),
+    )
+    monkeypatch.setattr(
+        keyword_indexer.keyword_indexer,
+        "delete_document",
+        lambda db, doc_id: deleted_keyword.append(doc_id),
+    )
+    monkeypatch.setattr(vector_indexer.vector_indexer, "delete_document", lambda doc_id: deleted_vector.append(doc_id))
+
+    client = TestClient(app)
+    with client:
+        headers = _login(client, "admin", "admin123")
+        created_kb = client.post(
+            "/api/kb",
+            headers=headers,
+            json={"name": "文档删除测试库", "visibility": "shared"},
+        ).json()["data"]
+        stored_file = tmp_path / "documents" / "delete-me.pdf"
+        stored_file.parent.mkdir(parents=True, exist_ok=True)
+        stored_file.write_bytes(b"%PDF-1.4")
+        with SessionLocal() as db:
+            document = Document(
+                kb_id=created_kb["id"],
+                file_name="delete-me.pdf",
+                file_ext="pdf",
+                minio_object_key="documents/delete-me.pdf",
+                sha256="abc",
+                visibility="shared",
+                uploaded_by="admin-user",
+                status="indexed",
+            )
+            db.add(document)
+            db.flush()
+            db.add(DocumentBlock(document_id=document.id, block_type="paragraph", text="待删除块"))
+            db.add(DocumentChunk(document_id=document.id, kb_id=created_kb["id"], chunk_index=0, text="待删除切片"))
+            document_id = document.id
+            db.commit()
+
+        response = client.delete(f"/api/documents/{document_id}", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["deleted"] == document_id
+    assert deleted_keyword == [document_id]
+    assert deleted_vector == [document_id]
+    assert not stored_file.exists()
+    with SessionLocal() as db:
+        assert db.get(Document, document_id) is None
+        assert db.query(DocumentBlock).filter(DocumentBlock.document_id == document_id).count() == 0
+        assert db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).count() == 0
 
 
 def test_model_setup_accepts_deepseek_config_without_exposing_api_key(tmp_path, monkeypatch):

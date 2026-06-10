@@ -11,8 +11,10 @@ from app.db.session import get_db
 from app.schemas.common import ok
 from app.schemas.document import OcrCorrectionRequest
 from app.services.audit.audit_logger import log_action
+from app.services.indexing.keyword_indexer import keyword_indexer
+from app.services.indexing.vector_indexer import vector_indexer
 from app.services.parser.document_parser import SUPPORTED_EXTENSIONS
-from app.services.permissions.permission_service import can_upload_to_kb
+from app.services.permissions.permission_service import can_manage_shared_kb, can_upload_to_kb
 from app.services.storage.minio_client import ObjectStorage
 from app.services.tasks.document_tasks import (
     process_document,
@@ -91,6 +93,29 @@ def get_document(document_id: str, db: Session = Depends(get_db), current_user: 
     if not document:
         raise HTTPException(status_code=404, detail="文档不存在")
     return ok(_doc_dict(document))
+
+
+@router.delete("/{document_id}")
+def delete_document(document_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    document = db.get(Document, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    kb = db.get(KnowledgeBase, document.kb_id) if document.kb_id else None
+    can_delete = can_manage_shared_kb(current_user) or (
+        document.visibility == "private"
+        and (document.uploaded_by == current_user.id or (kb is not None and kb.created_by == current_user.id))
+    )
+    if not can_delete:
+        raise HTTPException(status_code=403, detail="无权删除该文档")
+
+    file_name = document.file_name
+    keyword_indexer.delete_document(db, document.id)
+    vector_indexer.delete_document(document.id)
+    ObjectStorage(get_settings()).remove(document.minio_object_key)
+    db.delete(document)
+    db.commit()
+    log_action(db, "删除文档", current_user.id, "document", document_id, {"file_name": file_name})
+    return ok({"deleted": document_id})
 
 
 @router.get("/{document_id}/blocks")
