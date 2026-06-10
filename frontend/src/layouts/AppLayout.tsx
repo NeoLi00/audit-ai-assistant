@@ -6,8 +6,8 @@ import { fetchMe, login, logout, type UserInfo } from '../api/auth';
 import Sidebar from '../components/Sidebar';
 
 const PAGE_TITLES: Record<string, string> = {
-  '/': '首页',
-  '/chat': 'AI 对话',
+  '/': '工作台',
+  '/chat': '工作台',
   '/kb': '知识库',
   '/history': '历史记录',
   '/settings': '设置',
@@ -105,7 +105,7 @@ export default function AppLayout() {
         onOk={submitLogin}
         onCancel={() => setLoginOpen(Boolean(!user))}
         confirmLoading={submitting}
-        maskClosable={Boolean(user)}
+        mask={{ closable: Boolean(user) }}
       >
         <Form form={form} layout="vertical" initialValues={{ username: 'admin', password: 'admin123' }}>
           <Form.Item name="username" label="账号" rules={[{ required: true }]}>
@@ -120,4 +120,3 @@ export default function AppLayout() {
     </Layout>
   );
 }
-

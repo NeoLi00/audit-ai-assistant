@@ -3,7 +3,6 @@ import {
   DatabaseOutlined,
   HistoryOutlined,
   HomeOutlined,
-  MessageOutlined,
   SettingOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
@@ -21,8 +20,7 @@ export default function Sidebar({ user }: SidebarProps) {
   const location = useLocation();
   const items = useMemo(() => {
     const base = [
-      { key: '/', icon: <HomeOutlined />, label: '首页' },
-      { key: '/chat', icon: <MessageOutlined />, label: 'AI 对话' },
+      { key: '/', icon: <HomeOutlined />, label: '工作台' },
       { key: '/kb', icon: <DatabaseOutlined />, label: '知识库' },
       { key: '/history', icon: <HistoryOutlined />, label: '历史记录' },
       { key: '/settings', icon: <SettingOutlined />, label: '设置' },
@@ -48,4 +46,3 @@ export default function Sidebar({ user }: SidebarProps) {
     </aside>
   );
 }
-

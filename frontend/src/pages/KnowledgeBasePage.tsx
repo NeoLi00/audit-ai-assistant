@@ -76,8 +76,8 @@ export default function KnowledgeBasePage() {
   const treeData: DataNode[] = knowledgeBases.map((kb) => ({
     key: kb.id,
     title: (
-      <Space size={6}>
-        <span>{kb.name}</span>
+      <Space size={6} className="kb-tree-title">
+        <Typography.Text ellipsis={{ tooltip: kb.name }}>{kb.name}</Typography.Text>
         <Tag color={kb.visibility === 'shared' ? 'blue' : 'green'}>
           {kb.visibility === 'shared' ? '共享' : '个人'}
         </Tag>
@@ -127,7 +127,7 @@ export default function KnowledgeBasePage() {
       kbIds: selectedKb.id,
       scopeLabel: selectedKb.name,
     });
-    navigate(`/chat?${params.toString()}`);
+    navigate(`/?${params.toString()}`);
   };
 
   const openDocumentChat = (document: DocumentItem) => {
@@ -137,7 +137,7 @@ export default function KnowledgeBasePage() {
       documentIds: document.id,
     });
     if (document.kb_id) params.set('kbIds', document.kb_id);
-    navigate(`/chat?${params.toString()}`);
+    navigate(`/?${params.toString()}`);
   };
 
   return (
@@ -226,13 +226,14 @@ export default function KnowledgeBasePage() {
             rowKey="id"
             dataSource={filtered}
             pagination={{ pageSize: 8 }}
+            scroll={{ x: 920 }}
             columns={[
-              { title: '文件名', dataIndex: 'file_name' },
+              { title: '文件名', dataIndex: 'file_name', ellipsis: true },
               { title: '类型', dataIndex: 'file_ext', width: 90 },
-              { title: '分类', dataIndex: 'department_category' },
-              { title: '业务类型', dataIndex: 'business_type' },
+              { title: '分类', dataIndex: 'department_category', ellipsis: true },
+              { title: '业务类型', dataIndex: 'business_type', ellipsis: true },
               { title: '状态', dataIndex: 'status' },
-              { title: '上传时间', dataIndex: 'created_at' },
+              { title: '上传时间', dataIndex: 'created_at', width: 190 },
               {
                 title: '操作',
                 width: 180,
@@ -263,7 +264,7 @@ export default function KnowledgeBasePage() {
                 params.set('scope', 'kb');
                 params.set('scopeLabel', selectedKb.name);
               }
-              navigate(`/chat?${params.toString()}`);
+              navigate(`/?${params.toString()}`);
             }}
           />
         </div>
