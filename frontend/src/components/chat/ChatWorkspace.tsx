@@ -382,7 +382,7 @@ export default function ChatWorkspace() {
         downloadBlob(`${fileTitle}-${timestamp}.doc`, new Blob([html], { type: 'application/msword;charset=utf-8' }));
         return;
       }
-      openPrintablePdf(answer);
+      await downloadAnswerPdf(`${fileTitle}-${timestamp}.pdf`, answer);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '导出失败');
     } finally {
@@ -1083,6 +1083,7 @@ function downloadBlob(fileName: string, blob: Blob) {
 }
 
 function buildWordDocument(content: string) {
+  const bodyHtml = plainTextToHtml(markdownToPlainText(content));
   return `<!doctype html>
 <html>
 <head>
@@ -1097,56 +1098,189 @@ function buildWordDocument(content: string) {
   </style>
 </head>
 <body>
-  ${markdownToHtml(content)}
+  ${bodyHtml}
 </body>
 </html>`;
 }
 
-function openPrintablePdf(content: string) {
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    message.warning('浏览器阻止了打印窗口，请允许弹窗后重试');
-    return;
-  }
-  printWindow.document.open();
-  printWindow.document.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>AI 回答</title>
-  <style>
-    @page { margin: 22mm 18mm; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; line-height: 1.72; color: #1f1f1f; }
-    h2 { font-size: 15px; margin: 22px 0 8px; color: #333; }
-    p { margin: 0 0 12px; }
-  </style>
-</head>
-<body>
-  ${markdownToHtml(content)}
-  <script>window.onload = () => setTimeout(() => window.print(), 180);</script>
-</body>
-</html>`);
-  printWindow.document.close();
+async function downloadAnswerPdf(fileName: string, content: string) {
+  const plainText = markdownToPlainText(content);
+  const pages = renderTextPages(plainText);
+  downloadBlob(fileName, buildImagePdf(pages));
 }
 
-function markdownToHtml(content: string) {
+function plainTextToHtml(content: string) {
   return content
     .trim()
     .split(/\n{2,}/)
     .map((paragraph) => {
-      if (paragraph.startsWith('## ')) {
-        return `<h2>${inlineMarkdownToHtml(paragraph.slice(3))}</h2>`;
-      }
-      if (paragraph.startsWith('# ')) {
-        return `<h1>${inlineMarkdownToHtml(paragraph.slice(2))}</h1>`;
-      }
-      return `<p>${inlineMarkdownToHtml(paragraph).replace(/\n/g, '<br />')}</p>`;
+      return `<p>${escapeHtml(paragraph).replace(/\n/g, '<br />')}</p>`;
     })
     .join('\n');
 }
 
-function inlineMarkdownToHtml(text: string) {
-  return escapeHtml(text).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+function markdownToPlainText(content: string) {
+  return content
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .trim();
+}
+
+type PdfImagePage = {
+  width: number;
+  height: number;
+  bytes: Uint8Array;
+};
+
+function renderTextPages(content: string): PdfImagePage[] {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('浏览器不支持 PDF 导出所需的 Canvas');
+  }
+
+  const width = 1240;
+  const height = 1754;
+  const marginX = 118;
+  const marginY = 126;
+  const fontSize = 30;
+  const lineHeight = 50;
+  const paragraphGap = 22;
+  const maxTextWidth = width - marginX * 2;
+  const fontFamily = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", Arial, sans-serif';
+  const pages: PdfImagePage[] = [];
+  let y = marginY;
+
+  const resetPage = () => {
+    canvas.width = width;
+    canvas.height = height;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#1f1f1f';
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    ctx.textBaseline = 'top';
+  };
+  const commitPage = () => {
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    pages.push({ width, height, bytes: dataUrlToBytes(dataUrl) });
+  };
+
+  resetPage();
+  const paragraphs = content.trim() ? content.split(/\n{2,}/) : [''];
+  for (const paragraph of paragraphs) {
+    const sourceLines = paragraph.split('\n');
+    for (const sourceLine of sourceLines) {
+      const lines = wrapCanvasText(ctx, sourceLine || ' ', maxTextWidth);
+      for (const line of lines) {
+        if (y + lineHeight > height - marginY) {
+          commitPage();
+          resetPage();
+          y = marginY;
+        }
+        ctx.fillText(line, marginX, y);
+        y += lineHeight;
+      }
+    }
+    y += paragraphGap;
+  }
+  commitPage();
+  return pages;
+}
+
+function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const chars = Array.from(text);
+  const lines: string[] = [];
+  let current = '';
+  for (const char of chars) {
+    const next = current + char;
+    if (current && ctx.measureText(next).width > maxWidth) {
+      lines.push(current);
+      current = char;
+    } else {
+      current = next;
+    }
+  }
+  lines.push(current || ' ');
+  return lines;
+}
+
+function dataUrlToBytes(dataUrl: string) {
+  const base64 = dataUrl.split(',')[1] || '';
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function buildImagePdf(pages: PdfImagePage[]) {
+  const encoder = new TextEncoder();
+  const parts: BlobPart[] = [];
+  const offsets: number[] = [];
+  let length = 0;
+  const pdfWidth = 595.28;
+  const pdfHeight = 841.89;
+  const objectCount = 2 + pages.length * 3;
+
+  const pushText = (value: string) => {
+    const bytes = encoder.encode(value);
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    parts.push(buffer);
+    length += bytes.length;
+  };
+  const pushBytes = (bytes: Uint8Array) => {
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    parts.push(buffer);
+    length += bytes.length;
+  };
+  const startObject = (objectId: number) => {
+    offsets[objectId] = length;
+    pushText(`${objectId} 0 obj\n`);
+  };
+  const pageObjectId = (index: number) => 3 + index * 3;
+  const imageObjectId = (index: number) => pageObjectId(index) + 1;
+  const contentObjectId = (index: number) => pageObjectId(index) + 2;
+
+  pushText('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  startObject(1);
+  pushText('<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  startObject(2);
+  pushText(
+    `<< /Type /Pages /Count ${pages.length} /Kids [${pages.map((_, index) => `${pageObjectId(index)} 0 R`).join(' ')}] >>\nendobj\n`,
+  );
+
+  pages.forEach((page, index) => {
+    const pageId = pageObjectId(index);
+    const imageId = imageObjectId(index);
+    const contentId = contentObjectId(index);
+    const stream = `q\n${pdfWidth} 0 0 ${pdfHeight} 0 0 cm\n/Im${index + 1} Do\nQ\n`;
+
+    startObject(pageId);
+    pushText(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pdfWidth} ${pdfHeight}] /Resources << /XObject << /Im${index + 1} ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>\nendobj\n`,
+    );
+    startObject(imageId);
+    pushText(
+      `<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.bytes.length} >>\nstream\n`,
+    );
+    pushBytes(page.bytes);
+    pushText('\nendstream\nendobj\n');
+    startObject(contentId);
+    pushText(`<< /Length ${encoder.encode(stream).length} >>\nstream\n${stream}endstream\nendobj\n`);
+  });
+
+  const xrefOffset = length;
+  pushText(`xref\n0 ${objectCount + 1}\n0000000000 65535 f \n`);
+  for (let objectId = 1; objectId <= objectCount; objectId += 1) {
+    pushText(`${String(offsets[objectId]).padStart(10, '0')} 00000 n \n`);
+  }
+  pushText(`trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+  return new Blob(parts, { type: 'application/pdf' });
 }
 
 function escapeHtml(value: string) {
