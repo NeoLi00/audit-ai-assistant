@@ -305,7 +305,7 @@ export default function ChatWorkspace() {
           if (current.length) {
             return current.filter((id) => items.some((kb) => kb.id === id));
           }
-          return items[0]?.id ? [items[0].id] : [];
+          return [];
         });
       })
       .catch(() => setKnowledgeBases([]));
@@ -739,7 +739,7 @@ export default function ChatWorkspace() {
               {active?.title || '审计 AI 助手'}
             </Typography.Title>
             <Typography.Text type="secondary" className="workspace-subtitle">
-              {selectedKbNames.length ? `当前检索：${selectedKbNames.join('、')}` : '选择知识库后开始问答'}
+              {selectedKbNames.length ? `当前检索：${selectedKbNames.join('、')}` : '默认检索全部可见知识库'}
             </Typography.Text>
           </div>
           <div className="workspace-head-actions">
@@ -883,7 +883,7 @@ export default function ChatWorkspace() {
                 mode="multiple"
                 value={selectedKbIds}
                 onChange={setSelectedKbIds}
-                placeholder="选择一个或多个知识库"
+                placeholder="未选择时检索全部可见知识库"
                 maxTagCount="responsive"
                 options={knowledgeBases.map((kb) => ({
                   value: kb.id,

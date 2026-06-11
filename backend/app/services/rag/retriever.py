@@ -41,12 +41,15 @@ async def retrieve_evidence_with_trace(
     top_k: int = 8,
     current_user: User | None = None,
 ) -> dict:
-    allowed_kb_ids = _allowed_kb_ids(db, current_user, kb_id, kb_ids)
+    requested_kb_ids = _unique_strings(kb_ids or [])
+    effective_kb_id = None if requested_kb_ids else kb_id
+    allowed_kb_ids = _allowed_kb_ids(db, current_user, effective_kb_id, requested_kb_ids)
     requested_document_ids = None if document_ids is None else _unique_strings(document_ids)
     trace: dict = {
         "filters": {
-            "kb_id": kb_id,
-            "kb_ids": kb_ids or [],
+            "kb_id": effective_kb_id,
+            "kb_ids": requested_kb_ids,
+            "legacy_kb_id": kb_id if requested_kb_ids else None,
             "document_ids": requested_document_ids or [],
             "allowed_kb_ids": allowed_kb_ids,
         },
@@ -65,7 +68,7 @@ async def retrieve_evidence_with_trace(
             query_vector,
             db=db,
             top_k=50,
-            kb_id=kb_id,
+            kb_id=effective_kb_id,
             document_ids=requested_document_ids,
             current_user=current_user,
             allowed_kb_ids=allowed_kb_ids,
@@ -76,7 +79,7 @@ async def retrieve_evidence_with_trace(
     keyword_results = keyword_search(
         db,
         question,
-        kb_id=kb_id,
+        kb_id=effective_kb_id,
         document_ids=requested_document_ids,
         current_user=current_user,
         allowed_kb_ids=allowed_kb_ids,

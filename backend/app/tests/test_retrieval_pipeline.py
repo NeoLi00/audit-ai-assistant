@@ -169,6 +169,60 @@ async def test_retrieve_evidence_accepts_multiple_knowledge_bases(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_retrieve_evidence_does_not_narrow_multi_kb_request_to_legacy_kb_id(monkeypatch):
+    db = _session()
+    first_kb = KnowledgeBase(id="kb-first", name="第一库", category="第一库", visibility="shared")
+    second_kb = KnowledgeBase(id="kb-second", name="第二库", category="第二库", visibility="shared")
+    first_doc = Document(
+        id="doc-first",
+        kb_id=first_kb.id,
+        file_name="第一制度.docx",
+        file_ext="docx",
+        sha256="a",
+        status="indexed",
+        visibility="shared",
+    )
+    second_doc = Document(
+        id="doc-second",
+        kb_id=second_kb.id,
+        file_name="第二制度.docx",
+        file_ext="docx",
+        sha256="b",
+        status="indexed",
+        visibility="shared",
+    )
+    first_chunk = DocumentChunk(
+        id="chunk-first",
+        document_id=first_doc.id,
+        kb_id=first_kb.id,
+        text="第一库材料：普通采购记录。",
+    )
+    second_chunk = DocumentChunk(
+        id="chunk-second",
+        document_id=second_doc.id,
+        kb_id=second_kb.id,
+        text="第二库材料：项目细节要求保留验收报告。",
+    )
+    db.add_all([first_kb, second_kb, first_doc, second_doc, first_chunk, second_chunk])
+    db.commit()
+
+    indexer = VectorIndexer()
+    indexer.upsert([[0.0, 1.0], [1.0, 0.0]], [first_chunk, second_chunk])
+    monkeypatch.setattr(retriever, "vector_indexer", indexer)
+    monkeypatch.setattr(retriever, "get_embedding_client", lambda: FakeEmbeddingClient())
+
+    evidence = await retriever.retrieve_evidence(
+        db,
+        "完全无关键词",
+        kb_id=first_kb.id,
+        kb_ids=[first_kb.id, second_kb.id],
+        top_k=5,
+    )
+
+    assert [item["chunk_id"] for item in evidence] == ["chunk-second", "chunk-first"]
+
+
+@pytest.mark.asyncio
 async def test_retrieve_evidence_filters_to_explicit_document_ids(monkeypatch):
     db = _session()
     kb = KnowledgeBase(id="kb-scope", name="范围库", category="范围库", visibility="shared")
