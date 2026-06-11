@@ -9,10 +9,10 @@ import {
   DownloadOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
-  HistoryOutlined,
   HomeOutlined,
   LikeOutlined,
   LoadingOutlined,
+  LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   PaperClipOutlined,
@@ -22,10 +22,10 @@ import {
   SettingOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import { Button, Empty, Input, message, Modal, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { Button, Dropdown, Empty, Input, message, Modal, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { fetchMe, type UserInfo } from '../../api/auth';
+import { fetchMe, logout, type UserInfo } from '../../api/auth';
 import {
   createConversation,
   deleteConversation,
@@ -74,11 +74,14 @@ export default function ChatWorkspace() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [conversationSearch, setConversationSearch] = useState('');
+  const [conversationSearchResults, setConversationSearchResults] = useState<Conversation[]>([]);
+  const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [editingConversationId, setEditingConversationId] = useState<string>();
   const [editingTitle, setEditingTitle] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string>();
   const [editingMessageContent, setEditingMessageContent] = useState('');
   const [actionMessageId, setActionMessageId] = useState<string>();
+  const [exportingFormat, setExportingFormat] = useState<'md' | 'word' | 'pdf'>();
   const initialQuerySent = useRef(false);
   const initialUploadOpened = useRef(false);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
@@ -93,7 +96,6 @@ export default function ChatWorkspace() {
       [
         { key: '/', label: '工作台', icon: <HomeOutlined /> },
         { key: '/kb', label: '知识库', icon: <DatabaseOutlined /> },
-        { key: '/history', label: '历史记录', icon: <HistoryOutlined /> },
         { key: '/settings', label: '设置', icon: <SettingOutlined /> },
         user?.role === 'system_admin' || user?.role === 'audit_manager'
           ? { key: '/admin', label: '管理后台', icon: <ToolOutlined /> }
@@ -279,9 +281,24 @@ export default function ChatWorkspace() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      fetchConversations(conversationSearch)
-        .then(setConversations)
-        .catch(() => undefined);
+      const search = conversationSearch.trim();
+      if (!search) {
+        setConversationSearchResults([]);
+        setConversationSearchOpen(false);
+        fetchConversations()
+          .then(setConversations)
+          .catch(() => undefined);
+        return;
+      }
+      fetchConversations(search)
+        .then((items) => {
+          setConversationSearchResults(items);
+          setConversationSearchOpen(true);
+        })
+        .catch(() => {
+          setConversationSearchResults([]);
+          setConversationSearchOpen(true);
+        });
     }, 220);
     return () => window.clearTimeout(timer);
   }, [conversationSearch]);
@@ -324,6 +341,14 @@ export default function ChatWorkspace() {
     setSearchParams({ conversationId: item.id });
   };
 
+  const openConversation = async (conversationId: string) => {
+    setSearchParams({ conversationId });
+    setConversationSearch('');
+    setConversationSearchResults([]);
+    setConversationSearchOpen(false);
+    await loadConversation(conversationId);
+  };
+
   const feedback = async (messageId: string, type: string) => {
     await sendFeedback(messageId, type);
     message.success('反馈已记录');
@@ -338,18 +363,40 @@ export default function ChatWorkspace() {
     }
   };
 
-  const exportAssistantOutput = (item: ChatMessage) => {
-    const fileTitle = sanitizeFileName(active?.title || 'assistant-output');
-    const content = `${active?.title || '审计 AI 助手'}\n\n${item.content}\n`;
-    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${fileTitle}-${formatExportTime(new Date(item.created_at))}.md`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+  const exportConversationOutput = async (format: 'md' | 'word' | 'pdf') => {
+    if (!active) {
+      message.warning('请先选择会话');
+      return;
+    }
+    setExportingFormat(format);
+    try {
+      const latest = await fetchConversation(active.id);
+      applyConversation(latest);
+      const exportMessages = latest.messages?.length ? latest.messages : messages;
+      const title = latest.title || active.title || '审计 AI 助手';
+      if (!exportMessages.length) {
+        message.warning('当前会话暂无可导出的消息');
+        return;
+      }
+      const fileTitle = sanitizeFileName(title);
+      const content = buildConversationMarkdown(title, exportMessages, true);
+      const bodyContent = buildConversationMarkdown(title, exportMessages, false);
+      const timestamp = formatExportTime(new Date(latest.updated_at || active.updated_at || Date.now()));
+      if (format === 'md') {
+        downloadBlob(`${fileTitle}-${timestamp}.md`, new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+        return;
+      }
+      if (format === 'word') {
+        const html = buildWordDocument(title, bodyContent);
+        downloadBlob(`${fileTitle}-${timestamp}.doc`, new Blob([html], { type: 'application/msword;charset=utf-8' }));
+        return;
+      }
+      openPrintablePdf(title, bodyContent);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExportingFormat(undefined);
+    }
   };
 
   const regenerateAnswer = async (item: ChatMessage) => {
@@ -464,6 +511,17 @@ export default function ChatWorkspace() {
     }
   };
 
+  const handleWorkspaceLogout = useCallback(async () => {
+    try {
+      await logout();
+    } catch {
+      // Token may already be expired; local cleanup still matters.
+    }
+    localStorage.removeItem('audit_ai_token');
+    localStorage.removeItem('audit_ai_user');
+    window.location.reload();
+  }, []);
+
   const hasMessages = messages.length > 0;
   const selectedRoute = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
 
@@ -492,14 +550,44 @@ export default function ChatWorkspace() {
           <Button className="workspace-action-row" type="text" icon={<PlusOutlined />} onClick={createNewConversation}>
             新对话
           </Button>
-          <Input
-            className="workspace-search"
-            prefix={<SearchOutlined />}
-            value={conversationSearch}
-            onChange={(event) => setConversationSearch(event.target.value)}
-            placeholder="搜索会话标题或内容"
-            allowClear
-          />
+          <div className="workspace-search-box">
+            <Input
+              className="workspace-search"
+              prefix={<SearchOutlined />}
+              value={conversationSearch}
+              onChange={(event) => setConversationSearch(event.target.value)}
+              onFocus={() => setConversationSearchOpen(Boolean(conversationSearch.trim()))}
+              placeholder="搜索会话标题或内容"
+              allowClear
+            />
+            {conversationSearch.trim() && conversationSearchOpen && (
+              <div className="conversation-search-popover" onMouseDown={(event) => event.preventDefault()}>
+                <div className="conversation-search-head">
+                  <span>匹配会话</span>
+                  <span>{conversationSearchResults.length} 个结果</span>
+                </div>
+                <div className="conversation-search-results">
+                  {conversationSearchResults.length ? (
+                    conversationSearchResults.slice(0, 8).map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="conversation-search-result"
+                        onClick={() => openConversation(item.id)}
+                      >
+                        <ConversationSearchResult
+                          conversation={item}
+                          query={conversationSearch}
+                        />
+                      </button>
+                    ))
+                  ) : (
+                    <div className="conversation-search-empty">没有匹配的会话</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <nav className="workspace-nav" aria-label="主导航">
           {navItems.map((item) => (
@@ -514,7 +602,7 @@ export default function ChatWorkspace() {
             </button>
           ))}
         </nav>
-        <div className="workspace-recents-label">{conversationSearch.trim() ? '搜索结果' : '最近'}</div>
+        <div className="workspace-recents-label">最近</div>
         <div className="conversation-stack" role="list">
           {conversations.length ? (
             conversations.map((item) => (
@@ -522,10 +610,7 @@ export default function ChatWorkspace() {
                 key={item.id}
                 role="listitem"
                 className={active?.id === item.id ? 'conversation active' : 'conversation'}
-                onClick={() => {
-                  setSearchParams({ conversationId: item.id });
-                  loadConversation(item.id);
-                }}
+                onClick={() => openConversation(item.id)}
               >
                 {editingConversationId === item.id ? (
                   <Space.Compact className="full-width" onClick={(event) => event.stopPropagation()}>
@@ -587,6 +672,26 @@ export default function ChatWorkspace() {
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无会话" />
           )}
         </div>
+        {user && (
+          <div className="workspace-user-footer">
+            <div className="workspace-user-chip">
+              <span className="workspace-user-avatar">{user.display_name.slice(0, 1).toUpperCase()}</span>
+              <span className="workspace-user-copy">
+                <span className="workspace-user-name">{user.display_name}</span>
+                <span className="workspace-user-role">{userSubtitle(user)}</span>
+              </span>
+              <Tooltip title="退出">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<LogoutOutlined />}
+                  aria-label="退出"
+                  onClick={handleWorkspaceLogout}
+                />
+              </Tooltip>
+            </div>
+          </div>
+        )}
       </aside>
 
       <section className={`workspace-chat ${hasMessages ? 'has-messages' : 'empty'}`} aria-label="审计 AI 工作台">
@@ -682,14 +787,28 @@ export default function ChatWorkspace() {
                       onClick={() => copyAssistantOutput(item)}
                     />
                   </Tooltip>
-                  <Tooltip title="导出当前回答">
-                    <Button
-                      size="small"
-                      icon={<DownloadOutlined />}
-                      aria-label="导出当前回答"
-                      onClick={() => exportAssistantOutput(item)}
-                    />
-                  </Tooltip>
+                  <Dropdown
+                    trigger={['click']}
+                    menu={{
+                      items: [
+                        { key: 'md', label: '导出为 Markdown (.md)' },
+                        { key: 'word', label: '导出为 Word 文档 (.doc)' },
+                        { key: 'pdf', label: '导出为 PDF' },
+                      ],
+                      onClick: ({ key }) => {
+                        void exportConversationOutput(key as 'md' | 'word' | 'pdf');
+                      },
+                    }}
+                  >
+                    <Tooltip title="导出当前会话">
+                      <Button
+                        size="small"
+                        icon={<DownloadOutlined />}
+                        aria-label="导出当前会话"
+                        loading={Boolean(exportingFormat)}
+                      />
+                    </Tooltip>
+                  </Dropdown>
                   <Tooltip title="有帮助">
                     <Button
                       size="small"
@@ -794,6 +913,97 @@ function MessageText({ content }: { content: string }) {
   );
 }
 
+function ConversationSearchResult({ conversation, query }: { conversation: Conversation; query: string }) {
+  const match = conversation.search_match || {};
+  const isTitleMatch = match.source === 'title';
+  const snippet = isTitleMatch
+    ? conversation.title
+    : compactSnippetAroundQuery(match.snippet || conversation.title, query, match.matched_text);
+  return (
+    <>
+      <span className={isTitleMatch ? 'conversation-search-title title-only' : 'conversation-search-title'}>
+        {highlightQuery(conversation.title, query)}
+      </span>
+      {!isTitleMatch && <span className="conversation-search-snippet">{highlightQuery(snippet, query)}</span>}
+      <span className="conversation-search-meta">
+        {formatShortTime(conversation.updated_at)} · {isTitleMatch ? '标题匹配' : '对话内容匹配'}
+      </span>
+    </>
+  );
+}
+
+function highlightQuery(text: string, query: string) {
+  const terms = searchHighlightTerms(query);
+  if (!terms.length) {
+    return text;
+  }
+  const lowerText = text.toLocaleLowerCase();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const match = nextHighlightMatch(lowerText, terms, cursor);
+    if (!match) {
+      break;
+    }
+    if (match.index > cursor) {
+      parts.push(text.slice(cursor, match.index));
+    }
+    parts.push(
+      <mark key={`${match.index}-${match.term}`} className="search-highlight">
+        {text.slice(match.index, match.index + match.term.length)}
+      </mark>,
+    );
+    cursor = match.index + match.term.length;
+  }
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+  return parts.length ? parts : text;
+}
+
+function searchHighlightTerms(query: string) {
+  const cleanQuery = query.trim().replace(/\s+/g, ' ');
+  if (!cleanQuery) {
+    return [];
+  }
+  const terms = [cleanQuery, ...cleanQuery.split(' ')]
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  return Array.from(new Set(terms));
+}
+
+function nextHighlightMatch(lowerText: string, terms: string[], cursor: number) {
+  let best: { index: number; term: string } | undefined;
+  for (const term of terms) {
+    const index = lowerText.indexOf(term.toLocaleLowerCase(), cursor);
+    if (index < 0) {
+      continue;
+    }
+    if (!best || index < best.index || (index === best.index && term.length > best.term.length)) {
+      best = { index, term };
+    }
+  }
+  return best;
+}
+
+function compactSnippetAroundQuery(snippet: string, query: string, matchedText?: string) {
+  const normalized = snippet.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= 86) {
+    return normalized;
+  }
+  const terms = searchHighlightTerms(matchedText || query);
+  const lowerText = normalized.toLocaleLowerCase();
+  const match = nextHighlightMatch(lowerText, terms, 0);
+  if (!match) {
+    return `${normalized.slice(0, 82)}…`;
+  }
+  const context = 28;
+  const left = Math.max(0, match.index - context);
+  const right = Math.min(normalized.length, match.index + match.term.length + context);
+  return `${left > 0 ? '…' : ''}${normalized.slice(left, right)}${right < normalized.length ? '…' : ''}`;
+}
+
 function renderInlineMarkdown(line: string) {
   return line.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
     if (part.startsWith('**') && part.endsWith('**')) {
@@ -826,6 +1036,23 @@ function titleFromQuestion(text: string) {
   return text.trim().replace(/\s+/g, ' ').slice(0, 24) || '新会话';
 }
 
+function roleLabel(role: string) {
+  const labels: Record<string, string> = {
+    system_admin: '系统管理员',
+    audit_manager: '审计管理员',
+    auditor: '审计人员',
+  };
+  return labels[role] || role;
+}
+
+function userSubtitle(user: UserInfo) {
+  const role = roleLabel(user.role);
+  if (user.display_name === role) {
+    return user.department || role;
+  }
+  return role;
+}
+
 function formatShortTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -851,6 +1078,113 @@ function formatExportTime(date: Date) {
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(
     date.getMinutes(),
   )}`;
+}
+
+function buildConversationMarkdown(title: string, items: ChatMessage[], includeTitle: boolean) {
+  const lines = includeTitle ? [`# ${title}`, '', `导出时间：${new Date().toLocaleString('zh-CN')}`, ''] : [];
+  if (!items.length) {
+    lines.push('（当前会话暂无消息）');
+    return lines.join('\n');
+  }
+  items.forEach((item) => {
+    lines.push(`## ${item.role === 'user' ? '用户' : '助手'} · ${formatShortTime(item.created_at)}`, '');
+    lines.push(item.content.trim() || '（空消息）');
+    if (item.attachments?.length) {
+      lines.push('', `附件：${item.attachments.map((file) => file.file_name).join('、')}`);
+    }
+    lines.push('');
+  });
+  return lines.join('\n').trimEnd() + '\n';
+}
+
+function downloadBlob(fileName: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildWordDocument(title: string, content: string) {
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; line-height: 1.72; color: #1f1f1f; }
+    h1 { font-size: 22px; margin: 0 0 22px; }
+    h2 { font-size: 15px; margin: 22px 0 8px; color: #333; }
+    p { margin: 0 0 12px; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { border: 1px solid #deded8; padding: 6px 8px; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  ${markdownToHtml(content)}
+</body>
+</html>`;
+}
+
+function openPrintablePdf(title: string, content: string) {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    message.warning('浏览器阻止了打印窗口，请允许弹窗后重试');
+    return;
+  }
+  printWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { margin: 22mm 18mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; line-height: 1.72; color: #1f1f1f; }
+    h1 { font-size: 22px; margin: 0 0 22px; }
+    h2 { font-size: 15px; margin: 22px 0 8px; color: #333; }
+    p { margin: 0 0 12px; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  ${markdownToHtml(content)}
+  <script>window.onload = () => setTimeout(() => window.print(), 180);</script>
+</body>
+</html>`);
+  printWindow.document.close();
+}
+
+function markdownToHtml(content: string) {
+  return content
+    .trim()
+    .split(/\n{2,}/)
+    .map((paragraph) => {
+      if (paragraph.startsWith('## ')) {
+        return `<h2>${inlineMarkdownToHtml(paragraph.slice(3))}</h2>`;
+      }
+      if (paragraph.startsWith('# ')) {
+        return `<h1>${inlineMarkdownToHtml(paragraph.slice(2))}</h1>`;
+      }
+      return `<p>${inlineMarkdownToHtml(paragraph).replace(/\n/g, '<br />')}</p>`;
+    })
+    .join('\n');
+}
+
+function inlineMarkdownToHtml(text: string) {
+  return escapeHtml(text).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function ChatAttachment({

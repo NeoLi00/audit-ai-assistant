@@ -91,3 +91,28 @@ def test_chunker_serializes_table_context_for_retrieval():
     assert chunks[0]["metadata"]["sheet_name"] == "预算执行表"
     assert "工作表: 预算执行表" in chunks[0]["text"]
     assert "项目,预算金额,执行金额" in chunks[0]["text"]
+
+
+def test_chunker_normalizes_common_pdf_table_artifacts():
+    chunker = Chunker(max_chars=160, overlap=20)
+    blocks = [
+        {
+            "id": "table-1",
+            "document_id": "doc-1",
+            "block_type": "table",
+            "text": (
+                "授予中小企业合同金额 4,810.\n92 万元，占政府采购支出总额的41.\n65%。\n"
+                "操作系统应支持UEF12.\n0及以上规范固件引导；不支持 UEF|模式时应配置引导选单。"
+            ),
+            "page_number": 18,
+            "heading_path": "政府采购支出情况",
+        }
+    ]
+
+    chunks = chunker.chunk_blocks(blocks)
+    text = "\n".join(chunk["text"] for chunk in chunks)
+
+    assert "4,810.92 万元" in text
+    assert "41.65%" in text
+    assert "UEFI2.0及以上规范固件引导" in text
+    assert "UEFI模式" in text

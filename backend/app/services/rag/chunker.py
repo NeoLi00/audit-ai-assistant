@@ -73,6 +73,7 @@ class Chunker:
         return self._chunks_from_group(blocks, text, chunk_type)
 
     def _chunks_from_group(self, blocks: list[dict], text: str, chunk_type: str) -> list[dict]:
+        text = normalize_extracted_text(text)
         pieces = self._split_text(text)
         parent_id = self._parent_id(blocks)
         result = []
@@ -85,7 +86,11 @@ class Chunker:
         if len(text) <= self.max_chars:
             return [text] if text else []
 
-        segments = [segment.strip() for segment in re.split(r"(?<=[。！？；;.!?])\s*|\n+", text) if segment.strip()]
+        segments = [
+            segment.strip()
+            for segment in re.split(r"(?<=[。！？；;])\s*|(?<=[.!?])(?!\d)\s*|\n+", text)
+            if segment.strip()
+        ]
         pieces: list[str] = []
         current = ""
         for segment in segments:
@@ -204,3 +209,12 @@ def estimate_token_count(text: str) -> int:
     latin_tokens = len(re.findall(r"[A-Za-z0-9_]+", text))
     punctuation = len(re.findall(r"[^\w\s\u4e00-\u9fff]", text))
     return cjk_chars + latin_tokens + max(0, punctuation // 4)
+
+
+def normalize_extracted_text(text: str) -> str:
+    """Clean common PDF table/OCR artifacts without changing ordinary prose."""
+    text = re.sub(r"(?<=\d)\.\s*\n\s*(?=\d)", ".", text)
+    text = re.sub(r"(?<=\d)\.\s*\|\s*(?=\d)", ".", text)
+    text = re.sub(r"UEF[1Il|]\s*2\.\s*0", "UEFI2.0", text)
+    text = re.sub(r"UEF[1Il|](?=\s*(?:模式|是|为|或|2))", "UEFI", text)
+    return text

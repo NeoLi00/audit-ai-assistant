@@ -89,60 +89,82 @@ textarea {
   position: fixed;
   inset: 0 auto 0 0;
   z-index: 10;
-  width: 84px;
+  width: 304px;
   background: var(--sidebar-bg);
   border-right: 1px solid #e6e6e0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
+  overflow: hidden;
+  transition: width var(--motion);
 }
 
-.sidebar-brand {
-  width: 42px;
-  height: 42px;
-  margin: 18px 0 14px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
-  color: #111111;
-  background: transparent;
-  font-size: 22px;
+.sidebar.collapsed {
+  width: 64px;
 }
 
-.sidebar-menu {
-  width: 100%;
-  border-inline-end: 0 !important;
-  background: transparent;
-}
-
-.sidebar-menu .ant-menu-item {
-  width: calc(100% - 14px);
-  height: 58px;
-  margin-inline: 7px;
-  padding-inline: 0 !important;
-  border-radius: 12px;
-  display: flex;
+.sidebar.collapsed .workspace-rail-head {
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
-  line-height: 18px;
+  gap: 8px;
+  padding: 14px 8px 8px;
 }
 
-.sidebar-menu .ant-menu-title-content {
-  max-width: 64px;
-  margin-inline-start: 0 !important;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  font-weight: 500;
+.sidebar.collapsed .workspace-brand {
+  justify-content: center;
+}
+
+.sidebar.collapsed .workspace-panel-title,
+.sidebar.collapsed .workspace-action-row > span:not(.ant-btn-icon),
+.sidebar.collapsed .workspace-nav-item span:not(:first-child),
+.sidebar.collapsed .workspace-user-copy,
+.sidebar.collapsed .workspace-user-footer .ant-btn {
+  display: none;
+}
+
+.sidebar.collapsed .workspace-quick-actions,
+.sidebar.collapsed .workspace-nav {
+  padding-inline: 8px;
+}
+
+.sidebar.collapsed .workspace-action-row {
+  width: 48px;
+  padding: 0 !important;
+  justify-content: center;
+}
+
+.sidebar.collapsed .workspace-nav-item {
+  height: 38px;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 0;
+}
+
+.sidebar.collapsed .workspace-user-chip {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 7px 0;
+}
+
+.sidebar-nav {
+  border-bottom: 0;
+}
+
+.sidebar-spacer {
+  flex: 1 1 auto;
+  min-height: 18px;
 }
 
 .main-shell {
   min-width: 0;
   min-height: 100vh;
-  margin-left: 84px;
+  margin-left: 304px;
   background: var(--app-bg);
+  transition: margin-left var(--motion);
+}
+
+.main-shell.sidebar-collapsed {
+  margin-left: 64px;
 }
 
 .main-shell.workspace-route {
@@ -150,33 +172,17 @@ textarea {
 }
 
 .topbar {
-  height: 64px;
-  padding: 12px 24px;
+  height: 60px;
+  padding: 10px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
   border-bottom: 1px solid #eeeeea;
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(18px);
+  background: #ffffff;
   position: sticky;
   top: 0;
   z-index: 5;
-}
-
-.workspace-topbar {
-  justify-content: flex-end;
-  border-bottom-color: transparent;
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.workspace-topbar > div:first-child {
-  display: none;
-}
-
-.workspace-topbar .page-title,
-.workspace-topbar div > .ant-typography-secondary {
-  display: none;
 }
 
 .topbar > div {
@@ -199,7 +205,11 @@ textarea {
 }
 
 .main-shell:not(.workspace-route) .page-content {
-  padding: 20px 24px 36px;
+  padding: 18px 22px 32px;
+}
+
+.workspace-route .page-content {
+  min-height: 100vh;
 }
 
 .full-width {
@@ -210,7 +220,7 @@ textarea {
   display: grid;
   grid-template-columns: 304px minmax(0, 1fr);
   gap: 0;
-  height: calc(100vh - 64px);
+  height: 100vh;
   min-height: 0;
   overflow: hidden;
   transition: grid-template-columns var(--motion);
@@ -325,6 +335,11 @@ textarea {
   height: 36px;
 }
 
+.workspace-search-box {
+  position: relative;
+  min-width: 0;
+}
+
 .workspace-search.ant-input-affix-wrapper {
   border-radius: 8px !important;
   border-color: transparent !important;
@@ -336,6 +351,109 @@ textarea {
 .workspace-search.ant-input-affix-wrapper-focused {
   background: #ffffff;
   border-color: #deded8 !important;
+}
+
+.conversation-search-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 7px;
+  border: 1px solid #e6e6e0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.12);
+  animation: popover-enter 140ms ease both;
+}
+
+.conversation-search-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 6px 7px;
+  color: #8b8b85;
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.conversation-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conversation-search-result {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #242421;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--motion);
+}
+
+.conversation-search-result:hover {
+  background: #f3f3ef;
+}
+
+.conversation-search-title,
+.conversation-search-meta {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-search-title {
+  color: #22231f;
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.32;
+}
+
+.conversation-search-title.title-only {
+  font-size: 11.8px;
+  line-height: 1.35;
+}
+
+.conversation-search-snippet {
+  display: -webkit-box;
+  min-width: 0;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #666761;
+  font-size: 11px;
+  line-height: 1.42;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.search-highlight {
+  padding: 0 2px;
+  border-radius: 4px;
+  color: #08713a;
+  background: linear-gradient(180deg, rgba(226, 248, 236, 0.28), rgba(197, 241, 216, 0.86));
+  font-weight: 780;
+}
+
+.conversation-search-meta,
+.conversation-search-empty {
+  color: #8d8d87;
+  font-size: 10.5px;
+}
+
+.conversation-search-meta {
+  margin-top: 4px;
+}
+
+.conversation-search-empty {
+  padding: 14px 8px;
+  text-align: center;
 }
 
 .workspace-nav {
@@ -456,6 +574,71 @@ textarea {
 .conversation-actions .ant-btn {
   width: 24px;
   height: 24px;
+}
+
+.workspace-user-footer {
+  flex: 0 0 auto;
+  padding: 10px;
+  border-top: 1px solid #ecece6;
+}
+
+.workspace-user-chip {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  color: #2b2b28;
+  background: transparent;
+}
+
+.workspace-user-chip:hover {
+  background: #eeeeea;
+}
+
+.workspace-user-avatar {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #111111;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.workspace-user-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.workspace-user-name,
+.workspace-user-role {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-user-name {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.workspace-user-role {
+  color: #8b8b85;
+  font-size: 11px;
+}
+
+.workspace-user-footer .ant-btn {
+  width: 28px;
+  height: 28px;
+  color: #6f6f69;
 }
 
 .workspace-chat {
@@ -1176,15 +1359,6 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.history-item {
-  cursor: pointer;
-  transition: background-color 160ms ease;
-}
-
-.history-item:hover {
-  background: var(--panel-soft);
-}
-
 .admin-card {
   border-radius: 8px;
   border-color: var(--border-soft);
@@ -1220,6 +1394,18 @@ textarea {
   }
 }
 
+@keyframes popover-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1080px) {
   .kb-page {
     grid-template-columns: 1fr;
@@ -1236,21 +1422,24 @@ textarea {
 
 @media (max-width: 900px) {
   .sidebar {
-    width: 70px;
-  }
-
-  .sidebar-menu .ant-menu-title-content {
-    max-width: 52px;
-    font-size: 10px;
+    width: 260px;
   }
 
   .main-shell {
-    margin-left: 70px;
+    margin-left: 260px;
+  }
+
+  .sidebar.collapsed {
+    width: 64px;
+  }
+
+  .main-shell.sidebar-collapsed {
+    margin-left: 64px;
   }
 
   .topbar {
     height: auto;
-    min-height: 64px;
+    min-height: 58px;
     padding: 12px 16px;
   }
 
@@ -1314,23 +1503,19 @@ textarea {
 
 @media (max-width: 640px) {
   .sidebar {
-    width: 62px;
-  }
-
-  .sidebar-brand {
-    width: 36px;
-    height: 36px;
-    font-size: 18px;
-  }
-
-  .sidebar-menu .ant-menu-item {
-    width: calc(100% - 10px);
-    height: 54px;
-    margin-inline: 5px;
+    width: min(260px, 72vw);
   }
 
   .main-shell {
-    margin-left: 62px;
+    margin-left: min(260px, 72vw);
+  }
+
+  .sidebar.collapsed {
+    width: 58px;
+  }
+
+  .main-shell.sidebar-collapsed {
+    margin-left: 58px;
   }
 
   .topbar {

@@ -123,7 +123,7 @@ async def process_document_async(db: Session, document_id: str) -> dict:
 
     if chunk_rows:
         document.status = "embedding"
-        db.flush()
+        db.commit()
         texts = [chunk.text for chunk in chunk_rows]
         vectors = await get_embedding_client().embed_texts(texts)
         vector_indexer.upsert(vectors, chunk_rows)

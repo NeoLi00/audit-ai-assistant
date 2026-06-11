@@ -76,10 +76,25 @@ def test_conversations_can_be_searched_by_title_or_message_content(monkeypatch):
         )
         by_title = client.get("/api/chat/conversations", headers=headers, params={"q": "邮箱连接"}).json()["data"]
         by_message = client.get("/api/chat/conversations", headers=headers, params={"q": "idle timeout"}).json()["data"]
+        by_keywords = client.get("/api/chat/conversations", headers=headers, params={"q": "IMAP timeout"}).json()[
+            "data"
+        ]
 
     try:
         assert any(item["id"] == conversation_id for item in by_title)
         assert any(item["id"] == conversation_id for item in by_message)
+        assert any(item["id"] == conversation_id for item in by_keywords)
+        title_match = next(item for item in by_title if item["id"] == conversation_id)["search_match"]
+        message_match = next(item for item in by_message if item["id"] == conversation_id)["search_match"]
+        keyword_match = next(item for item in by_keywords if item["id"] == conversation_id)["search_match"]
+        assert title_match["source"] == "title"
+        assert title_match["snippet"] == "邮箱连接排查"
+        assert title_match["matched_text"] == "邮箱连接"
+        assert message_match["source"] == "message"
+        assert "idle timeout" in message_match["snippet"]
+        assert message_match["matched_text"] == "idle timeout"
+        assert keyword_match["source"] == "message"
+        assert keyword_match["matched_text"] == "IMAP"
     finally:
         _cleanup_conversation(conversation_id)
 
@@ -254,6 +269,51 @@ def test_conversation_scope_document_ids_are_passed_to_answer_service(monkeypatc
         assert response.status_code == 200
         assert captured["kb_ids"] == ["kb-1"]
         assert captured["document_ids"] == ["doc-1"]
+    finally:
+        _cleanup_conversation(conversation_id)
+
+
+def test_empty_document_ids_do_not_filter_out_knowledge_base_retrieval(monkeypatch):
+    captured = {}
+
+    async def fake_answer_question(
+        db,
+        question,
+        kb_id=None,
+        kb_ids=None,
+        document_ids=None,
+        mode="normal",
+        uploaded_files=None,
+        conversation_id=None,
+        current_message_id=None,
+        current_user=None,
+    ):
+        captured["kb_ids"] = kb_ids
+        captured["document_ids"] = document_ids
+        return {"answer": "知识库回答", "citations": [{"chunk_id": "c1"}]}
+
+    monkeypatch.setattr(chat_routes, "answer_question", fake_answer_question)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with client:
+        headers = _login(client)
+        conversation = client.post(
+            "/api/chat/conversations",
+            headers=headers,
+            json={"title": "围绕知识库", "kb_ids": ["kb-1"], "scope_label": "制度库"},
+        ).json()["data"]
+        conversation_id = conversation["id"]
+        response = client.post(
+            f"/api/chat/conversations/{conversation_id}/messages",
+            headers=headers,
+            json={"content": "只看知识库回答", "kb_ids": ["kb-1"]},
+        )
+
+    try:
+        assert response.status_code == 200
+        assert captured["kb_ids"] == ["kb-1"]
+        assert captured["document_ids"] is None
+        assert len(response.json()["data"]["message"]["citations"]) == 1
     finally:
         _cleanup_conversation(conversation_id)
 

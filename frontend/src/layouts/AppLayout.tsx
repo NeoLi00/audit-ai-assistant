@@ -1,4 +1,4 @@
-import { LoginOutlined, LogoutOutlined } from '@ant-design/icons';
+import { LoginOutlined } from '@ant-design/icons';
 import { Button, Form, Input, Layout, message, Modal, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
@@ -9,7 +9,6 @@ const PAGE_TITLES: Record<string, string> = {
   '/': '工作台',
   '/chat': '工作台',
   '/kb': '知识库',
-  '/history': '历史记录',
   '/settings': '设置',
   '/admin': '管理后台',
 };
@@ -18,6 +17,7 @@ export default function AppLayout() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('audit_ai_sidebar') === 'collapsed');
   const [form] = Form.useForm();
   const location = useLocation();
   const routeRoot = `/${location.pathname.split('/')[1]}`;
@@ -71,34 +71,43 @@ export default function AppLayout() {
     setLoginOpen(true);
   };
 
+  const toggleSidebar = () => {
+    setSidebarCollapsed((value) => {
+      const nextValue = !value;
+      localStorage.setItem('audit_ai_sidebar', nextValue ? 'collapsed' : 'expanded');
+      return nextValue;
+    });
+  };
+
   return (
     <Layout className="app-shell">
-      {!isWorkspaceRoute && <Sidebar user={user} />}
-      <Layout className={`main-shell ${isWorkspaceRoute ? 'workspace-route' : ''}`}>
-        <header className={`topbar ${isWorkspaceRoute ? 'workspace-topbar' : ''}`}>
-          <div>
-            <Typography.Title level={4} className="page-title">
-              {title}
-            </Typography.Title>
-            <Typography.Text type="secondary">本地知识库 · 审计问答 · 文件分析</Typography.Text>
-          </div>
-          <Space>
-            {user ? (
-              <>
-                <Typography.Text>{user.display_name}</Typography.Text>
-                <Button icon={<LogoutOutlined />} onClick={submitLogout}>
-                  退出
+      {!isWorkspaceRoute && (
+        <Sidebar user={user} onLogout={submitLogout} collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+      )}
+      <Layout
+        className={`main-shell ${isWorkspaceRoute ? 'workspace-route' : ''} ${
+          !isWorkspaceRoute && sidebarCollapsed ? 'sidebar-collapsed' : ''
+        }`}
+      >
+        {!isWorkspaceRoute && (
+          <header className="topbar">
+            <div>
+              <Typography.Title level={4} className="page-title">
+                {title}
+              </Typography.Title>
+              <Typography.Text type="secondary">本地知识库 · 审计问答 · 文件分析</Typography.Text>
+            </div>
+            <Space>
+              {!user && (
+                <Button icon={<LoginOutlined />} onClick={() => setLoginOpen(true)}>
+                  登录
                 </Button>
-              </>
-            ) : (
-              <Button icon={<LoginOutlined />} onClick={() => setLoginOpen(true)}>
-                登录
-              </Button>
-            )}
-          </Space>
-        </header>
+              )}
+            </Space>
+          </header>
+        )}
         <main className="page-content">
-          <Outlet />
+          <Outlet key={user?.id || 'guest'} />
         </main>
       </Layout>
       <Modal

@@ -2,6 +2,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -32,7 +33,7 @@ class MinerUParser:
         if isinstance(source, ParseResult):
             return source
 
-        command_path = shutil.which(self.settings.mineru_command)
+        command_path = self._resolve_command_path()
         if not command_path:
             return ParseResult(
                 status="need_review",
@@ -184,9 +185,32 @@ class MinerUParser:
         blocks: list[ParsedBlock] = []
         heading_stack: list[str] = []
         paragraph_index = 0
-        for raw in text.splitlines():
+        lines = text.splitlines()
+        line_index = 0
+        while line_index < len(lines):
+            raw = lines[line_index]
             line = raw.strip()
             if not line:
+                line_index += 1
+                continue
+            if line.lower().startswith("<table"):
+                table_lines = [raw.rstrip()]
+                line_index += 1
+                while line_index < len(lines):
+                    table_lines.append(lines[line_index].rstrip())
+                    if lines[line_index].strip().lower().endswith("</table>"):
+                        break
+                    line_index += 1
+                blocks.append(
+                    ParsedBlock(
+                        text="\n".join(table_lines).strip(),
+                        block_type="table",
+                        heading_path="/".join(heading_stack) if heading_stack else None,
+                        paragraph_index=paragraph_index,
+                    )
+                )
+                paragraph_index += 1
+                line_index += 1
                 continue
             if line.startswith("#"):
                 level = min(len(line) - len(line.lstrip("#")), 6)
@@ -210,4 +234,28 @@ class MinerUParser:
                     )
                 )
             paragraph_index += 1
+            line_index += 1
         return blocks
+
+    def _resolve_command_path(self) -> str | None:
+        command = str(self.settings.mineru_command or "").strip()
+        if not command:
+            return None
+        if os.sep in command or (os.altsep and os.altsep in command):
+            candidate = Path(command).expanduser()
+            return str(candidate) if candidate.exists() and os.access(candidate, os.X_OK) else None
+
+        resolved = shutil.which(command)
+        if resolved:
+            return resolved
+
+        candidate_dirs = [
+            Path(sys.prefix) / "bin",
+            Path(sys.prefix) / "Scripts",
+            Path(sys.executable).parent,
+        ]
+        for directory in candidate_dirs:
+            candidate = directory / command
+            if candidate.exists() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        return None

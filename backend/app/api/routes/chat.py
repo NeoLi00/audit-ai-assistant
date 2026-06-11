@@ -59,15 +59,18 @@ def list_conversations(
     query = db.query(Conversation).filter(Conversation.user_id == current_user.id)
     search = " ".join((q or "").split()).strip()
     if search:
-        pattern = f"%{search}%"
-        query = query.filter(
-            or_(
-                Conversation.title.ilike(pattern),
-                Conversation.messages.any(Message.content.ilike(pattern)),
+        filters = []
+        for term in _search_terms(search):
+            pattern = f"%{term}%"
+            filters.extend(
+                [
+                    Conversation.title.ilike(pattern),
+                    Conversation.messages.any(Message.content.ilike(pattern)),
+                ]
             )
-        )
+        query = query.filter(or_(*filters))
     conversations = query.order_by(Conversation.updated_at.desc()).limit(100).all()
-    return ok([_conversation_dict(item) for item in conversations])
+    return ok([_conversation_dict(item, search=search) for item in conversations])
 
 
 @router.get("/conversations/{conversation_id}")
@@ -409,6 +412,7 @@ async def _generate_assistant_for_user_message(
     scope = _conversation_scope(conversation)
     effective_kb_ids = kb_ids or scope.get("kb_ids", [])
     effective_document_ids = document_ids or scope.get("document_ids", [])
+    effective_document_ids = effective_document_ids or None
     effective_kb_id = kb_id or (effective_kb_ids[0] if effective_kb_ids else None)
 
     deterministic_answer = _try_temp_excel_analysis(attached_files, user_message.content)
@@ -545,7 +549,7 @@ def _try_temp_excel_analysis(files: list[TempFile], question: str) -> str | None
     return "\n\n".join(outputs) if outputs else None
 
 
-def _conversation_dict(conversation: Conversation, include_messages: bool = False) -> dict:
+def _conversation_dict(conversation: Conversation, include_messages: bool = False, search: str = "") -> dict:
     scope = _conversation_scope(conversation)
     data = {
         "id": conversation.id,
@@ -555,6 +559,8 @@ def _conversation_dict(conversation: Conversation, include_messages: bool = Fals
         "created_at": conversation.created_at.isoformat(),
         "updated_at": conversation.updated_at.isoformat(),
     }
+    if search:
+        data["search_match"] = _conversation_search_match(conversation, search)
     if include_messages:
         attachments_by_message: dict[str, list[dict]] = {}
         pending_temp_files = []
@@ -570,6 +576,64 @@ def _conversation_dict(conversation: Conversation, include_messages: bool = Fals
         ]
         data["temp_files"] = pending_temp_files
     return data
+
+
+def _conversation_search_match(conversation: Conversation, search: str) -> dict:
+    search = " ".join(search.split()).strip()
+    if not search:
+        return {}
+    terms = _search_terms(search)
+    title_match = _best_search_match(conversation.title, terms)
+    if title_match:
+        return {
+            "source": "title",
+            "title": conversation.title,
+            "snippet": conversation.title,
+            "matched_text": title_match[1],
+        }
+    for message in sorted(conversation.messages, key=lambda item: item.created_at):
+        message_match = _best_search_match(message.content, terms)
+        if message_match:
+            index, matched_text = message_match
+            return {
+                "source": "message",
+                "title": conversation.title,
+                "snippet": _snippet_around(message.content, index, len(matched_text)),
+                "role": message.role,
+                "matched_text": matched_text,
+            }
+    return {"source": "none", "title": conversation.title, "snippet": ""}
+
+
+def _search_terms(search: str) -> list[str]:
+    normalized = " ".join(search.split()).strip()
+    if not normalized:
+        return []
+    terms = [normalized, *normalized.split()]
+    return list(dict.fromkeys(term for term in terms if term))
+
+
+def _best_search_match(text: str, terms: list[str]) -> tuple[int, str] | None:
+    folded_text = text.casefold()
+    best: tuple[int, str] | None = None
+    for term in terms:
+        index = folded_text.find(term.casefold())
+        if index < 0:
+            continue
+        if best is None or index < best[0] or (index == best[0] and len(term) > len(best[1])):
+            best = (index, text[index : index + len(term)])
+    return best
+
+
+def _snippet_around(text: str, start: int, length: int, context: int = 32) -> str:
+    left = max(0, start - context)
+    right = min(len(text), start + length + context)
+    snippet = " ".join(text[left:right].split())
+    if left > 0:
+        snippet = f"…{snippet}"
+    if right < len(text):
+        snippet = f"{snippet}…"
+    return snippet
 
 
 def _conversation_scope_metadata(kb_ids: list[str] | None, document_ids: list[str] | None, label: str | None) -> dict:

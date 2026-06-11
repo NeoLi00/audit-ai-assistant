@@ -10,6 +10,68 @@ from app.services.indexing.vector_indexer import INDEXED_DOCUMENT_STATUSES
 
 FTS_TABLE = "document_chunk_fts"
 
+DOMAIN_KEYPHRASES = (
+    "电子招标投标",
+    "政府采购",
+    "需求标准",
+    "数据检索",
+    "增强功能",
+    "中文检索",
+    "中国纪年历法",
+    "操作系统",
+    "系统引导",
+    "引导模式",
+    "引导修复",
+    "固件规范",
+    "规范固件",
+    "UEFI",
+    "UEFI2.0",
+    "财政拨款预算",
+    "财政拨款收入",
+    "财政拨款",
+    "预算执行",
+    "预算单位",
+    "省级人民政府",
+    "三公经费",
+    "三公",
+    "决算支出",
+    "预算数",
+    "决算数",
+    "中小企业",
+    "小微企业",
+    "合同金额",
+    "政府采购支出",
+    "审计署",
+    "特派员办事处",
+    "工程项目",
+    "项目招标",
+    "暗箱操作",
+    "商业贿赂",
+    "投标文件",
+    "拒收",
+    "提示",
+    "数据库",
+    "经费",
+    "占比",
+)
+
+QUESTION_STOPWORDS = (
+    "是多少",
+    "是什么",
+    "有哪些",
+    "哪些",
+    "什么",
+    "怎么",
+    "如何",
+    "是否",
+    "包括",
+    "中的",
+    "中",
+    "和",
+    "及",
+    "以及",
+)
+
 
 class KeywordIndexer:
     def ensure_schema(self, db: Session) -> None:
@@ -202,9 +264,31 @@ def keyword_search(
 
 def _terms(query: str) -> list[str]:
     normalized = re.sub(r"[，。！？；、,.!?;:：()\[\]【】\"'“”\s]+", " ", query.strip())
-    terms = [term for term in normalized.split(" ") if term]
-    if query.strip() and query.strip() not in terms:
-        terms.append(query.strip())
+    candidates: list[str] = []
+    for raw in normalized.split(" "):
+        candidates.extend(_searchable_terms_from_token(raw))
+    stripped_query = query.strip()
+    if stripped_query and not any(stopword in stripped_query for stopword in QUESTION_STOPWORDS):
+        candidates.append(stripped_query)
+    return list(dict.fromkeys(term for term in candidates if term))
+
+
+def _searchable_terms_from_token(token: str) -> list[str]:
+    terms = []
+    token = token.strip()
+    if not token:
+        return terms
+    cleaned = token
+    for stopword in QUESTION_STOPWORDS:
+        cleaned = cleaned.replace(stopword, " ")
+    for value in re.findall(r"[A-Za-z]+(?:[A-Za-z0-9_-]+)?|\d+(?:\.\d+)?%?", token):
+        terms.append(value)
+    for phrase in DOMAIN_KEYPHRASES:
+        if phrase in token:
+            terms.append(phrase)
+    for part in cleaned.split():
+        if 2 <= len(part) <= 12:
+            terms.append(part)
     return terms
 
 

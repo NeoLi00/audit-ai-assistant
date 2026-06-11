@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from app.core.config import Settings
@@ -35,3 +36,37 @@ def test_mineru_parser_converts_doc_to_pdf_source(tmp_path: Path, monkeypatch):
     prepared = MinerUParser()._prepare_source(source)
 
     assert prepared == converted
+
+
+def test_mineru_parser_resolves_command_from_virtualenv_bin_when_path_missing(tmp_path: Path, monkeypatch):
+    venv = tmp_path / "venv"
+    command = venv / "bin" / "mineru"
+    command.parent.mkdir(parents=True)
+    command.write_text("#!/bin/sh\n", encoding="utf-8")
+    command.chmod(0o755)
+    monkeypatch.setattr("app.services.parser.mineru_parser.shutil.which", lambda _: None)
+    monkeypatch.setattr(sys, "prefix", str(venv))
+
+    resolved = MinerUParser(Settings(mineru_command="mineru"))._resolve_command_path()
+
+    assert resolved == str(command)
+
+
+def test_mineru_markdown_to_blocks_groups_html_table():
+    markdown = "\n".join(
+        [
+            "# 预算执行表",
+            "<table>",
+            "  <tr><th><p>项目</p></th><th><p>执行率</p></th></tr>",
+            "  <tr><td><p>A项目</p></td><td><p>82%</p></td></tr>",
+            "</table>",
+            "表后说明：低于 85% 需要专项说明。",
+        ]
+    )
+
+    blocks = MinerUParser()._markdown_to_blocks(markdown)
+
+    assert [block.block_type for block in blocks] == ["heading", "table", "paragraph"]
+    assert blocks[1].heading_path == "预算执行表"
+    assert "<table>" in blocks[1].text
+    assert "A项目" in blocks[1].text

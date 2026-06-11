@@ -32,6 +32,13 @@ export type Conversation = {
   id: string;
   title: string;
   mode: string;
+  search_match?: {
+    source?: 'title' | 'message' | 'none';
+    title?: string;
+    snippet?: string;
+    matched_text?: string;
+    role?: string;
+  };
   scope?: {
     type?: string;
     label?: string;
