@@ -11,8 +11,10 @@ from time import monotonic
 from app.core.config import Settings, get_settings
 from app.services.parser.base import ParsedBlock, ParseResult
 from app.services.parser.libreoffice_converter import convert_doc_to_docx, convert_doc_to_pdf
+from app.services.parser.progress import progress_for_status
 
 _mineru_lock = Lock()
+MINERU_CAPABILITIES = ["版面分析", "表格结构识别", "图片/扫描件 OCR 文字识别", "公式/印章等视觉元素检测"]
 
 
 @dataclass
@@ -33,6 +35,7 @@ class MinerUParser:
         if isinstance(source, ParseResult):
             return source
 
+        progress_metadata = self.progress_metadata(path)
         command_path = self._resolve_command_path()
         if not command_path:
             return ParseResult(
@@ -41,7 +44,7 @@ class MinerUParser:
                     "MinerU unavailable：未找到 mineru 命令。请先安装 MinerU，例如 "
                     'uv pip install -U "mineru[all]"，然后重新入库。'
                 ),
-                metadata={"provider": "mineru", "command": self.settings.mineru_command},
+                metadata={**progress_metadata, "command": self.settings.mineru_command},
             )
 
         output_root = Path(self.settings.mineru_output_dir)
@@ -57,6 +60,7 @@ class MinerUParser:
         ]
         run = self._run_mineru(command)
         run_metadata = {
+            **progress_metadata,
             "provider": "mineru",
             "command": command,
             "elapsed_seconds": round(run.elapsed_seconds, 2),
@@ -66,7 +70,10 @@ class MinerUParser:
         if run.timed_out:
             return ParseResult(
                 status="need_review",
-                error_message=f"MinerU 解析超过 {self.settings.mineru_timeout} 秒，已停止后台进程。",
+                error_message=(
+                    f"MinerU 解析超过 {self.settings.mineru_timeout} 秒，已停止后台进程。"
+                    "将 MINERU_TIMEOUT 设为 0 可禁用超时。"
+                ),
                 metadata=run_metadata,
             )
 
@@ -104,6 +111,7 @@ class MinerUParser:
     def _run_mineru(self, command: list[str]) -> MinerURunResult:
         with _mineru_lock:
             started = monotonic()
+            timeout = self._communicate_timeout()
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
@@ -112,7 +120,7 @@ class MinerUParser:
                 start_new_session=True,
             )
             try:
-                stdout, stderr = process.communicate(timeout=self.settings.mineru_timeout)
+                stdout, stderr = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 self._stop_process_group(process)
                 stdout, stderr = process.communicate()
@@ -134,6 +142,29 @@ class MinerUParser:
                 stderr=stderr,
                 elapsed_seconds=monotonic() - started,
             )
+
+    def _communicate_timeout(self) -> int | None:
+        timeout = int(self.settings.mineru_timeout or 0)
+        return timeout if timeout > 0 else None
+
+    def progress_metadata(self, path: Path) -> dict:
+        timeout = self._communicate_timeout()
+        timeout_text = "无后端超时限制" if timeout is None else f"后端超时 {timeout} 秒"
+        ext = path.suffix.lower().lstrip(".") or "unknown"
+        return {
+            "provider": "mineru",
+            "parser_provider": "mineru",
+            "parser_backend": self.settings.mineru_backend,
+            **progress_for_status("parsing"),
+            "capabilities": MINERU_CAPABILITIES,
+            "status_message": (
+                "MinerU 正在解析：版面分析、表格结构识别、图片/扫描件 OCR 文字识别运行中；"
+                "首次加载模型或大文件可能需要较长时间。"
+            ),
+            "parser_detail": f"文件类型：{ext}；能力：{'、'.join(MINERU_CAPABILITIES)}；{timeout_text}。",
+            "timeout_seconds": timeout,
+            "timeout_disabled": timeout is None,
+        }
 
     def _stop_process_group(self, process: subprocess.Popen) -> None:
         try:

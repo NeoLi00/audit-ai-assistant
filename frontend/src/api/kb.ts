@@ -23,6 +23,12 @@ export type DocumentItem = {
   is_current_version: boolean;
   status: string;
   error_message: string;
+  status_message?: string;
+  parser_provider?: string;
+  parser_detail?: string;
+  progress_percent?: number;
+  progress_stage?: string;
+  progress_estimated?: boolean;
   uploaded_by?: string;
   created_at: string;
 };

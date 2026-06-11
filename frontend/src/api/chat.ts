@@ -25,6 +25,12 @@ export type TempFile = {
   file_name: string;
   status: string;
   error_message?: string;
+  status_message?: string;
+  parser_provider?: string;
+  parser_detail?: string;
+  progress_percent?: number;
+  progress_stage?: string;
+  progress_estimated?: boolean;
   expires_at?: string;
 };
 
@@ -56,6 +62,7 @@ export type ConversationCreatePayload = {
   kb_ids?: string[];
   document_ids?: string[];
   scope_label?: string;
+  client_request_id?: string;
 };
 
 export function createConversation(payload?: string | ConversationCreatePayload) {

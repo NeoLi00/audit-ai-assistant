@@ -23,6 +23,7 @@ from app.services.chat_context.context_manager import ChatContextManager
 from app.services.model_gateway.gateway import get_llm_client
 from app.services.parser.document_parser import SUPPORTED_EXTENSIONS
 from app.services.parser.excel_analyzer import analyze_excel_question
+from app.services.parser.progress import progress_for_status
 from app.services.rag.answer_service import answer_question
 from app.services.storage.minio_client import ObjectStorage
 from app.services.tasks.temp_file_tasks import process_temp_file_in_background
@@ -36,8 +37,15 @@ def create_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    client_request_id = _clean_client_request_id(payload.client_request_id)
+    if client_request_id:
+        existing = _conversation_by_client_request(db, current_user.id, client_request_id)
+        if existing:
+            return ok(_conversation_dict(existing))
     metadata = _conversation_scope_metadata(payload.kb_ids, payload.document_ids, payload.scope_label)
     metadata["auto_title"] = True
+    if client_request_id:
+        metadata["client_request_id"] = client_request_id
     conversation = Conversation(
         user_id=current_user.id,
         title=payload.title or "新会话",
@@ -653,6 +661,30 @@ def _conversation_scope_metadata(kb_ids: list[str] | None, document_ids: list[st
     }
 
 
+def _clean_client_request_id(value: str | None) -> str:
+    return " ".join((value or "").split()).strip()[:160]
+
+
+def _conversation_by_client_request(db: Session, user_id: str, client_request_id: str) -> Conversation | None:
+    if not client_request_id:
+        return None
+    recent = (
+        db.query(Conversation)
+        .filter(Conversation.user_id == user_id)
+        .order_by(Conversation.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    return next(
+        (
+            conversation
+            for conversation in recent
+            if (conversation.metadata_json or {}).get("client_request_id") == client_request_id
+        ),
+        None,
+    )
+
+
 def _conversation_scope(conversation: Conversation) -> dict:
     metadata = conversation.metadata_json or {}
     scope = metadata.get("scope") if isinstance(metadata, dict) else None
@@ -695,10 +727,20 @@ def _message_dict(message: Message, attachments: list[dict] | None = None) -> di
 
 
 def _temp_file_dict(temp_file: TempFile) -> dict:
+    metadata = temp_file.metadata_json or {}
+    parser_detail = metadata.get("parser_detail") or ""
+    capabilities = metadata.get("capabilities")
+    if isinstance(capabilities, list) and capabilities and not parser_detail:
+        parser_detail = "能力：" + "、".join(str(item) for item in capabilities)
+    progress = progress_for_status(temp_file.status, metadata)
     return {
         "id": temp_file.id,
         "file_name": temp_file.file_name,
         "status": temp_file.status,
-        "error_message": (temp_file.metadata_json or {}).get("error_message", ""),
+        "error_message": metadata.get("error_message", ""),
+        "status_message": metadata.get("status_message", ""),
+        "parser_provider": metadata.get("parser_provider") or metadata.get("provider", ""),
+        "parser_detail": parser_detail,
+        **progress,
         "expires_at": temp_file.expires_at.isoformat() if temp_file.expires_at else None,
     }

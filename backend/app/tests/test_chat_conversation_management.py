@@ -99,6 +99,43 @@ def test_conversations_can_be_searched_by_title_or_message_content(monkeypatch):
         _cleanup_conversation(conversation_id)
 
 
+def test_scoped_conversation_create_is_idempotent_for_same_client_request():
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with client:
+        headers = _login(client)
+        first = client.post(
+            "/api/chat/conversations",
+            headers=headers,
+            json={
+                "title": "围绕制度库",
+                "kb_ids": ["kb-1"],
+                "scope_label": "制度库",
+                "client_request_id": "kb-launch-1",
+            },
+        )
+        second = client.post(
+            "/api/chat/conversations",
+            headers=headers,
+            json={
+                "title": "围绕制度库",
+                "kb_ids": ["kb-1"],
+                "scope_label": "制度库",
+                "client_request_id": "kb-launch-1",
+            },
+        )
+        conversations = client.get("/api/chat/conversations", headers=headers).json()["data"]
+
+    conversation_id = first.json()["data"]["id"]
+    try:
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.json()["data"]["id"] == conversation_id
+        assert sum(1 for item in conversations if item["id"] == conversation_id) == 1
+    finally:
+        _cleanup_conversation(conversation_id)
+
+
 def test_conversation_title_can_be_updated_and_conversation_can_be_deleted(monkeypatch):
     removed_keys: list[str] = []
     monkeypatch.setattr(chat_routes.ObjectStorage, "remove", lambda self, key: removed_keys.append(key))

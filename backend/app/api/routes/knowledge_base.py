@@ -2,15 +2,23 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.routes.auth import get_current_user
+from app.core.config import get_settings
 from app.db.models import Document, KnowledgeBase, User
 from app.db.session import get_db
 from app.schemas.common import ok
 from app.schemas.knowledge_base import KnowledgeBaseCreate
 from app.services.indexing.keyword_indexer import keyword_indexer
 from app.services.indexing.vector_indexer import vector_indexer
+from app.services.parser.progress import progress_for_status
 from app.services.permissions.permission_service import can_manage_shared_kb, visible_kb_filter
 
 router = APIRouter(prefix="/kb", tags=["knowledge_base"])
+
+MINERU_STATUS_MESSAGE = (
+    "MinerU 正在解析：版面分析、表格结构识别、图片/扫描件 OCR 文字识别运行中；"
+    "首次加载模型或大文件可能需要较长时间。"
+)
+MINERU_PARSER_DETAIL = "能力：版面分析、表格结构识别、图片/扫描件 OCR 文字识别、公式/印章等视觉元素检测。"
 
 
 @router.get("")
@@ -106,9 +114,42 @@ def _doc_dict(doc: Document) -> dict:
         "is_current_version": doc.is_current_version,
         "status": doc.status,
         "error_message": doc.error_message,
+        "status_message": _document_status_message(doc),
+        "parser_provider": get_settings().document_parser_provider,
+        "parser_detail": _document_parser_detail(doc),
+        **progress_for_status(doc.status),
         "uploaded_by": doc.uploaded_by,
         "created_at": doc.created_at.isoformat(),
     }
+
+
+def _document_status_message(doc: Document) -> str:
+    if doc.status == "failed":
+        return f"解析失败：{doc.error_message}" if doc.error_message else "解析失败。"
+    if doc.status == "need_review":
+        return f"解析完成但需要人工复核：{doc.error_message}" if doc.error_message else "解析结果需要人工复核。"
+    if doc.error_message:
+        return doc.error_message
+    if doc.status == "uploaded":
+        return "文件已上传，等待进入解析队列。"
+    if doc.status == "parsing":
+        return MINERU_STATUS_MESSAGE if get_settings().document_parser_provider == "mineru" else "正在解析文件内容。"
+    if doc.status == "chunking":
+        return "解析完成，正在进行结构化切分。"
+    if doc.status == "embedding":
+        return "切分完成，正在生成 embedding 并写入向量/关键词索引。"
+    if doc.status == "indexed":
+        return "已完成解析、切分和索引。"
+    return ""
+
+
+def _document_parser_detail(doc: Document) -> str:
+    provider = get_settings().document_parser_provider
+    if provider == "mineru":
+        timeout = int(get_settings().mineru_timeout or 0)
+        timeout_text = "无后端超时限制" if timeout <= 0 else f"后端超时 {timeout} 秒"
+        return f"文件类型：{doc.file_ext or 'unknown'}；{MINERU_PARSER_DETAIL}；{timeout_text}。"
+    return f"文件类型：{doc.file_ext or 'unknown'}；解析器：{provider}。"
 
 
 def ensure_personal_kb(db: Session, user: User) -> KnowledgeBase:

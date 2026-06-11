@@ -7,6 +7,7 @@ class ConversationCreate(BaseModel):
     kb_ids: list[str] = []
     document_ids: list[str] = []
     scope_label: str | None = None
+    client_request_id: str | None = None
 
 
 class ChatMessageCreate(BaseModel):

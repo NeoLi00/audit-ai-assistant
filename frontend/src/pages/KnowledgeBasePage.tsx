@@ -8,7 +8,7 @@ import {
   SearchOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { Button, Form, Input, message, Modal, Radio, Segmented, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, Form, Input, message, Modal, Progress, Radio, Segmented, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchMe, type UserInfo } from '../api/auth';
@@ -23,6 +23,15 @@ import {
 import { deleteDocument } from '../api/documents';
 import ChatInput from '../components/ChatInput';
 import DocumentCard from '../components/DocumentCard';
+import {
+  documentProgressColor,
+  documentProgressPercent,
+  documentProgressStage,
+  documentProgressStatus,
+  documentStatusColor,
+  documentStatusDetail,
+  documentStatusLabel,
+} from '../components/documentStatus';
 import UploadModal from '../components/UploadModal';
 
 export default function KnowledgeBasePage() {
@@ -115,6 +124,7 @@ export default function KnowledgeBasePage() {
       scope: 'kb',
       kbIds: selectedKb.id,
       scopeLabel: selectedKb.name,
+      launchId: newLaunchId('kb'),
     });
     navigate(`/?${params.toString()}`);
   };
@@ -124,6 +134,7 @@ export default function KnowledgeBasePage() {
       scope: 'document',
       scopeLabel: document.file_name,
       documentIds: document.id,
+      launchId: newLaunchId('doc'),
     });
     if (document.kb_id) params.set('kbIds', document.kb_id);
     navigate(`/?${params.toString()}`);
@@ -252,7 +263,43 @@ export default function KnowledgeBasePage() {
               { title: '类型', dataIndex: 'file_ext', width: 90 },
               { title: '分类', dataIndex: 'department_category', ellipsis: true },
               { title: '业务类型', dataIndex: 'business_type', ellipsis: true },
-              { title: '状态', dataIndex: 'status' },
+              {
+                title: '状态',
+                dataIndex: 'status',
+                width: 220,
+                render: (_, document: DocumentItem) => {
+                  const detail = documentStatusDetail(document);
+                  const showDetail = detail && !['indexed', 'ready'].includes(document.status);
+                  const showProgress = !['indexed', 'ready'].includes(document.status);
+                  return (
+                    <Space direction="vertical" size={2} className="document-status-cell">
+                      <Tooltip title={detail || undefined}>
+                        <Tag color={documentStatusColor(document.status)}>{documentStatusLabel(document.status)}</Tag>
+                      </Tooltip>
+                      {showDetail ? (
+                        <Typography.Text type="secondary" ellipsis={{ tooltip: detail }}>
+                          {detail}
+                        </Typography.Text>
+                      ) : null}
+                      {showProgress ? (
+                        <div className="document-progress table-progress">
+                          <div className="document-progress-label">
+                            <Typography.Text type="secondary">{documentProgressStage(document)}</Typography.Text>
+                            <Typography.Text type="secondary">{documentProgressPercent(document)}%</Typography.Text>
+                          </div>
+                          <Progress
+                            percent={documentProgressPercent(document)}
+                            showInfo={false}
+                            size="small"
+                            status={documentProgressStatus(document.status)}
+                            strokeColor={documentProgressColor(document.status)}
+                          />
+                        </div>
+                      ) : null}
+                    </Space>
+                  );
+                },
+              },
               { title: '上传时间', dataIndex: 'created_at', width: 190 },
               {
                 title: '操作',
@@ -278,7 +325,7 @@ export default function KnowledgeBasePage() {
           <Typography.Text type="secondary">基于当前知识库提问</Typography.Text>
           <ChatInput
             onSubmit={(text) => {
-              const params = new URLSearchParams({ query: text });
+              const params = new URLSearchParams({ query: text, launchId: newLaunchId('kb-question') });
               if (selectedKbId) params.set('kbIds', selectedKbId);
               if (selectedKb) {
                 params.set('scope', 'kb');
@@ -336,4 +383,11 @@ export default function KnowledgeBasePage() {
       </Modal>
     </div>
   );
+}
+
+function newLaunchId(prefix: string) {
+  if (globalThis.crypto?.randomUUID) {
+    return `${prefix}-${globalThis.crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

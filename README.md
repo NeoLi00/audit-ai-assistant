@@ -19,6 +19,7 @@
 - `.doc` 会先尝试调用 LibreOffice headless 转 `.docx`，再交给 MinerU。
 - `.xls` 会标记 `need_review`，建议先转为 `.xlsx` 后上传。
 - 如果本机没有安装 `mineru` 命令，文档会标记 `need_review` 并提示安装 MinerU，不会悄悄回退到轻量解析。
+- `MINERU_TIMEOUT=0` 表示后端不主动超时终止 MinerU；解析中会在前端展示版面分析、表格结构识别、图片/扫描件 OCR 等状态提示。
 
 安装 MinerU：
 

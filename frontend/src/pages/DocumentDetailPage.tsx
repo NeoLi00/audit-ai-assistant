@@ -1,5 +1,5 @@
 import { DeleteOutlined, MessageOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
-import { Button, Card, Descriptions, Empty, Input, message, Modal, Space, Tag, Typography } from 'antd';
+import { Button, Card, Descriptions, Empty, Input, message, Modal, Progress, Space, Tag, Tooltip, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { fetchMe, type UserInfo } from '../api/auth';
@@ -13,6 +13,15 @@ import {
   type DocumentChunk,
 } from '../api/documents';
 import type { DocumentItem } from '../api/kb';
+import {
+  documentProgressColor,
+  documentProgressPercent,
+  documentProgressStage,
+  documentProgressStatus,
+  documentStatusColor,
+  documentStatusDetail,
+  documentStatusLabel,
+} from '../components/documentStatus';
 
 export default function DocumentDetailPage() {
   const navigate = useNavigate();
@@ -67,6 +76,7 @@ export default function DocumentDetailPage() {
                     scope: 'document',
                     scopeLabel: document.file_name,
                     documentIds: document.id,
+                    launchId: newLaunchId('doc'),
                   });
                   if (document.kb_id) params.set('kbIds', document.kb_id);
                   navigate(`/chat?${params.toString()}`);
@@ -109,9 +119,31 @@ export default function DocumentDetailPage() {
             <Descriptions.Item label="标签">{document.tags.join(', ') || '-'}</Descriptions.Item>
             <Descriptions.Item label="版本">{document.version}</Descriptions.Item>
             <Descriptions.Item label="状态">
-              <Tag color={document.status === 'indexed' ? 'green' : document.status === 'need_review' ? 'gold' : 'blue'}>
-                {document.status}
-              </Tag>
+              <Space direction="vertical" size={2} className="document-status-cell">
+                <Tooltip title={documentStatusDetail(document) || undefined}>
+                  <Tag color={documentStatusColor(document.status)}>{documentStatusLabel(document.status)}</Tag>
+                </Tooltip>
+                {documentStatusDetail(document) && !['indexed', 'ready'].includes(document.status) ? (
+                  <Typography.Text type="secondary" ellipsis={{ tooltip: documentStatusDetail(document) }}>
+                    {documentStatusDetail(document)}
+                  </Typography.Text>
+                ) : null}
+                {!['indexed', 'ready'].includes(document.status) ? (
+                  <div className="document-progress detail-progress">
+                    <div className="document-progress-label">
+                      <Typography.Text type="secondary">{documentProgressStage(document)}</Typography.Text>
+                      <Typography.Text type="secondary">{documentProgressPercent(document)}%</Typography.Text>
+                    </div>
+                    <Progress
+                      percent={documentProgressPercent(document)}
+                      showInfo={false}
+                      size="small"
+                      status={documentProgressStatus(document.status)}
+                      strokeColor={documentProgressColor(document.status)}
+                    />
+                  </div>
+                ) : null}
+              </Space>
             </Descriptions.Item>
           </Descriptions>
         </Space>
@@ -166,4 +198,11 @@ export default function DocumentDetailPage() {
       )}
     </div>
   );
+}
+
+function newLaunchId(prefix: string) {
+  if (globalThis.crypto?.randomUUID) {
+    return `${prefix}-${globalThis.crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

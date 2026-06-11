@@ -1042,6 +1042,10 @@ textarea {
   background: var(--panel-soft);
 }
 
+.chat-attachment.with-detail {
+  border-radius: 14px;
+}
+
 .chat-attachment.ready {
   background: var(--green-soft);
   border-color: #bbf7d0;
@@ -1063,6 +1067,38 @@ textarea {
 
 .chat-attachment-name {
   min-width: 0;
+}
+
+.chat-attachment-detail {
+  grid-column: 2 / -1;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.chat-attachment-progress {
+  grid-column: 2 / -1;
+  min-width: 0;
+  width: 100%;
+}
+
+.chat-attachment-progress-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.chat-attachment-progress-label .ant-typography {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.chat-attachment-progress .ant-progress-line {
+  margin-bottom: 0;
 }
 
 .chat-attachment.compact {
@@ -1311,9 +1347,54 @@ textarea {
 }
 
 .document-card-title,
-.document-card-meta {
+.document-card-meta,
+.document-card-status-detail {
   min-width: 0;
   display: block;
+}
+
+.document-card-status-detail,
+.document-status-cell .ant-typography {
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.document-progress {
+  min-width: 0;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.document-progress-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.document-progress-label .ant-typography {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.document-progress .ant-progress-line {
+  margin-bottom: 0;
+}
+
+.document-status-cell {
+  min-width: 0;
+  width: 100%;
+}
+
+.table-progress {
+  width: 170px;
+}
+
+.detail-progress {
+  width: min(260px, 100%);
 }
 
 .document-card-tags {

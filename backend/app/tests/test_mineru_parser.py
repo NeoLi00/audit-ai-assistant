@@ -52,6 +52,12 @@ def test_mineru_parser_resolves_command_from_virtualenv_bin_when_path_missing(tm
     assert resolved == str(command)
 
 
+def test_mineru_timeout_zero_disables_subprocess_timeout():
+    parser = MinerUParser(Settings(mineru_timeout=0))
+
+    assert parser._communicate_timeout() is None
+
+
 def test_mineru_markdown_to_blocks_groups_html_table():
     markdown = "\n".join(
         [

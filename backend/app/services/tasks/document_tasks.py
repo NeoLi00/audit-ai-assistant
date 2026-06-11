@@ -9,6 +9,7 @@ from app.services.indexing.keyword_indexer import keyword_indexer
 from app.services.indexing.vector_indexer import vector_indexer
 from app.services.model_gateway.gateway import get_embedding_client
 from app.services.parser.document_parser import DocumentParser
+from app.services.parser.progress import progress_for_status
 from app.services.rag.chunker import Chunker
 from app.services.storage.minio_client import ObjectStorage
 from app.services.tasks.celery_app import celery_app
@@ -46,10 +47,13 @@ async def process_document_async(db: Session, document_id: str) -> dict:
 
     storage = ObjectStorage()
     path = storage.local_path_for(document.minio_object_key)
+    parser = DocumentParser()
+    progress_metadata = _parser_progress_metadata(parser, path)
     document.status = "parsing"
+    document.error_message = progress_metadata.get("status_message", "")
     db.commit()
 
-    parse_result = DocumentParser().parse(path)
+    parse_result = parser.parse(path)
     document.error_message = parse_result.error_message
     if parse_result.status == "failed":
         document.status = "failed"
@@ -80,6 +84,7 @@ async def process_document_async(db: Session, document_id: str) -> dict:
     db.flush()
 
     document.status = "chunking"
+    document.error_message = "解析完成，正在进行结构化切分。"
     db.flush()
     chunk_inputs = [
         {
@@ -123,6 +128,7 @@ async def process_document_async(db: Session, document_id: str) -> dict:
 
     if chunk_rows:
         document.status = "embedding"
+        document.error_message = "切分完成，正在生成 embedding 并写入向量/关键词索引。"
         db.commit()
         texts = [chunk.text for chunk in chunk_rows]
         vectors = await get_embedding_client().embed_texts(texts)
@@ -130,5 +136,18 @@ async def process_document_async(db: Session, document_id: str) -> dict:
         keyword_indexer.upsert(db, chunk_rows)
 
     document.status = "need_review" if parse_result.status == "need_review" else "indexed"
+    if document.status == "indexed":
+        document.error_message = ""
     db.commit()
     return {"status": document.status, "chunks": len(chunk_rows)}
+
+
+def _parser_progress_metadata(parser: DocumentParser, path: Path) -> dict:
+    progress_metadata = getattr(parser, "progress_metadata", None)
+    if not callable(progress_metadata):
+        return {
+            **progress_for_status("parsing"),
+            "status_message": "正在解析文件内容。",
+            "parser_detail": f"文件类型：{path.suffix.lower().lstrip('.') or 'unknown'}。",
+        }
+    return progress_metadata(path)

@@ -116,3 +116,44 @@ def test_message_is_rejected_while_temp_file_is_still_parsing():
         assert "仍在解析" in response.json()["detail"]
     finally:
         _cleanup_conversation(conversation_id)
+
+
+def test_temp_file_status_exposes_mineru_progress_message():
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with client:
+        headers = _login(client)
+        conversation = client.post(
+            "/api/chat/conversations",
+            headers=headers,
+            json={"title": "mineru-status-test"},
+        ).json()["data"]
+        conversation_id = conversation["id"]
+        with SessionLocal() as db:
+            db.add(
+                TempFile(
+                    conversation_id=conversation_id,
+                    file_name="扫描件.pdf",
+                    minio_object_key="temp-files/mineru-status.pdf",
+                    status="parsing",
+                    metadata_json={
+                        "local_path": "temp-files/mineru-status.pdf",
+                        "provider": "mineru",
+                        "status_message": "MinerU 正在解析：版面分析、表格识别、OCR 文字识别运行中。",
+                        "capabilities": ["OCR 文字识别", "表格识别"],
+                    },
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                )
+            )
+            db.commit()
+        detail = client.get(f"/api/chat/conversations/{conversation_id}", headers=headers).json()["data"]
+
+    try:
+        temp_file = detail["temp_files"][0]
+        assert temp_file["parser_provider"] == "mineru"
+        assert "OCR" in temp_file["status_message"]
+        assert "表格识别" in temp_file["parser_detail"]
+        assert temp_file["progress_stage"] == "解析中"
+        assert temp_file["progress_percent"] == 40
+    finally:
+        _cleanup_conversation(conversation_id)

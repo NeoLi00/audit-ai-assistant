@@ -22,7 +22,7 @@ import {
   SettingOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import { Button, Dropdown, Empty, Input, message, Modal, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { Button, Dropdown, Empty, Input, message, Modal, Progress, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchMe, logout, type UserInfo } from '../../api/auth';
@@ -46,6 +46,8 @@ import ChatInput from '../ChatInput';
 import FileUploadPanel from '../FileUploadPanel';
 import ModelStatusBadge from '../ModelStatusBadge';
 
+const scopedConversationRequests = new Map<string, Promise<Conversation>>();
+
 export default function ChatWorkspace() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -54,6 +56,7 @@ export default function ChatWorkspace() {
   const requestedQuery = searchParams.get('query');
   const requestedKbId = searchParams.get('kbId') || undefined;
   const requestedKbIdsParam = searchParams.get('kbIds');
+  const requestedLaunchId = searchParams.get('launchId') || '';
   const requestedKbIds = useMemo(
     () => parseKbIds(requestedKbIdsParam, requestedKbId),
     [requestedKbId, requestedKbIdsParam],
@@ -82,9 +85,34 @@ export default function ChatWorkspace() {
   const [editingMessageContent, setEditingMessageContent] = useState('');
   const [actionMessageId, setActionMessageId] = useState<string>();
   const [exportingTarget, setExportingTarget] = useState<{ messageId: string; format: 'md' | 'word' | 'pdf' }>();
-  const initialQuerySent = useRef(false);
+  const initialQuerySent = useRef<string | undefined>(undefined);
+  const bootstrappedScopedLaunch = useRef<string | undefined>(undefined);
   const initialUploadOpened = useRef(false);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const shouldCreateScopedConversation =
+    Boolean(requestedQuery) || Boolean(requestedScope) || requestedKbIds.length > 0 || requestedDocumentIds.length > 0;
+  const scopedLaunchKey = useMemo(() => {
+    if (!shouldCreateScopedConversation) {
+      return '';
+    }
+    return [
+      requestedLaunchId || location.key,
+      requestedQuery || '',
+      requestedScope,
+      requestedScopeLabel,
+      requestedKbIds.join(','),
+      requestedDocumentIds.join(','),
+    ].join('|');
+  }, [
+    location.key,
+    requestedDocumentIds,
+    requestedKbIds,
+    requestedLaunchId,
+    requestedQuery,
+    requestedScope,
+    requestedScopeLabel,
+    shouldCreateScopedConversation,
+  ]);
 
   const activeScope = active?.scope;
   const selectedKbNames = useMemo(() => {
@@ -165,15 +193,18 @@ export default function ChatWorkspace() {
         await loadConversation(requestedConversationId);
         return;
       }
-      const shouldCreateScopedConversation =
-        Boolean(requestedQuery) || Boolean(requestedScope) || requestedKbIds.length > 0 || requestedDocumentIds.length > 0;
       if (shouldCreateScopedConversation) {
+        if (bootstrappedScopedLaunch.current === scopedLaunchKey) {
+          return;
+        }
+        bootstrappedScopedLaunch.current = scopedLaunchKey;
         const title = requestedScopeLabel || requestedQuery?.slice(0, 24) || '新会话';
-        const created = await createConversation({
+        const created = await createScopedConversationOnce(scopedLaunchKey, {
           title,
           kb_ids: requestedKbIds,
           document_ids: requestedDocumentIds,
           scope_label: requestedScopeLabel,
+          client_request_id: scopedLaunchKey,
         });
         setConversations((items) => [created, ...items.filter((item) => item.id !== created.id)]);
         setActive(created);
@@ -203,10 +234,11 @@ export default function ChatWorkspace() {
     requestedDocumentIds,
     requestedKbIds,
     requestedQuery,
-    requestedScope,
     requestedScopeLabel,
+    scopedLaunchKey,
     searchParams,
     setSearchParams,
+    shouldCreateScopedConversation,
   ]);
 
   const handleSubmit = useCallback(
@@ -304,11 +336,15 @@ export default function ChatWorkspace() {
   }, [conversationSearch]);
 
   useEffect(() => {
-    if (requestedQuery && active && !initialQuerySent.current) {
-      initialQuerySent.current = true;
+    if (!requestedQuery || !active || messages.length > 0) {
+      return;
+    }
+    const queryLaunchKey = `${active.id}|${scopedLaunchKey}|${requestedQuery}`;
+    if (initialQuerySent.current !== queryLaunchKey) {
+      initialQuerySent.current = queryLaunchKey;
       handleSubmit(requestedQuery, requestedKbIds);
     }
-  }, [active, handleSubmit, requestedKbIds, requestedQuery]);
+  }, [active, handleSubmit, messages.length, requestedKbIds, requestedQuery, scopedLaunchKey]);
 
   useEffect(() => {
     if (shouldOpenUpload && active && !initialUploadOpened.current) {
@@ -1044,6 +1080,17 @@ function userSubtitle(user: UserInfo) {
   return role;
 }
 
+function createScopedConversationOnce(key: string, payload: Parameters<typeof createConversation>[0]) {
+  const requestKey = key || JSON.stringify(payload);
+  const existing = scopedConversationRequests.get(requestKey);
+  if (existing) {
+    return existing;
+  }
+  const request = createConversation(payload);
+  scopedConversationRequests.set(requestKey, request);
+  return request;
+}
+
 function formatShortTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -1302,15 +1349,25 @@ function ChatAttachment({
   onDelete?: () => void;
 }) {
   const status = tempFileStatusMeta(file.status);
+  const detail = file.error_message || file.status_message || file.parser_detail || '';
+  const showDetail = Boolean(detail && !compact && file.status !== 'ready');
+  const progressPercent = tempFileProgressPercent(file);
+  const showProgress = !compact && file.status !== 'ready';
   return (
-    <div className={`chat-attachment ${status.className} ${compact ? 'compact' : ''}`}>
+    <div
+      className={`chat-attachment ${status.className} ${compact ? 'compact' : ''} ${
+        showDetail || showProgress ? 'with-detail' : ''
+      }`}
+    >
       <PaperClipOutlined className="chat-attachment-icon" />
       <Typography.Text ellipsis={{ tooltip: file.file_name }} className="chat-attachment-name">
         {file.file_name}
       </Typography.Text>
-      <Tag icon={status.icon} color={status.color}>
-        {status.label}
-      </Tag>
+      <Tooltip title={detail || undefined}>
+        <Tag icon={status.icon} color={status.color}>
+          {status.label}
+        </Tag>
+      </Tooltip>
       {onDelete ? (
         <Tooltip title="删除附件">
           <Button
@@ -1323,8 +1380,47 @@ function ChatAttachment({
           />
         </Tooltip>
       ) : null}
+      {showDetail ? (
+        <Typography.Text type="secondary" className="chat-attachment-detail" ellipsis={{ tooltip: detail }}>
+          {detail}
+        </Typography.Text>
+      ) : null}
+      {showProgress ? (
+        <div className="chat-attachment-progress">
+          <div className="chat-attachment-progress-label">
+            <Typography.Text type="secondary">{file.progress_stage || status.label}</Typography.Text>
+            <Typography.Text type="secondary">{progressPercent}%</Typography.Text>
+          </div>
+          <Progress
+            percent={progressPercent}
+            showInfo={false}
+            size="small"
+            status={tempFileProgressStatus(file.status)}
+            strokeColor={file.status === 'need_review' ? '#d97706' : undefined}
+          />
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function tempFileProgressPercent(file: TempFile) {
+  const value = file.progress_percent ?? fallbackTempFileProgress(file.status);
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function fallbackTempFileProgress(status: string) {
+  if (status === 'parsing') return 40;
+  if (status === 'need_review' || status === 'failed' || status === 'ready') return 100;
+  return 0;
+}
+
+function tempFileProgressStatus(status: string): 'normal' | 'active' | 'exception' | 'success' {
+  if (status === 'failed') return 'exception';
+  if (status === 'ready') return 'success';
+  if (status === 'parsing') return 'active';
+  return 'normal';
 }
 
 function tempFileStatusMeta(status: string) {
