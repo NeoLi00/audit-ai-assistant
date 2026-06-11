@@ -81,7 +81,7 @@ export default function ChatWorkspace() {
   const [editingMessageId, setEditingMessageId] = useState<string>();
   const [editingMessageContent, setEditingMessageContent] = useState('');
   const [actionMessageId, setActionMessageId] = useState<string>();
-  const [exportingFormat, setExportingFormat] = useState<'md' | 'word' | 'pdf'>();
+  const [exportingTarget, setExportingTarget] = useState<{ messageId: string; format: 'md' | 'word' | 'pdf' }>();
   const initialQuerySent = useRef(false);
   const initialUploadOpened = useRef(false);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
@@ -363,39 +363,30 @@ export default function ChatWorkspace() {
     }
   };
 
-  const exportConversationOutput = async (format: 'md' | 'word' | 'pdf') => {
-    if (!active) {
-      message.warning('请先选择会话');
+  const exportAssistantOutput = async (item: ChatMessage, format: 'md' | 'word' | 'pdf') => {
+    const answer = item.content.trim();
+    if (!answer) {
+      message.warning('当前回答为空，无法导出');
       return;
     }
-    setExportingFormat(format);
+    setExportingTarget({ messageId: item.id, format });
     try {
-      const latest = await fetchConversation(active.id);
-      applyConversation(latest);
-      const exportMessages = latest.messages?.length ? latest.messages : messages;
-      const title = latest.title || active.title || '审计 AI 助手';
-      if (!exportMessages.length) {
-        message.warning('当前会话暂无可导出的消息');
-        return;
-      }
-      const fileTitle = sanitizeFileName(title);
-      const content = buildConversationMarkdown(title, exportMessages, true);
-      const bodyContent = buildConversationMarkdown(title, exportMessages, false);
-      const timestamp = formatExportTime(new Date(latest.updated_at || active.updated_at || Date.now()));
+      const fileTitle = sanitizeFileName(`${active?.title || 'assistant-answer'}-回答`);
+      const timestamp = formatExportTime(new Date(item.created_at || Date.now()));
       if (format === 'md') {
-        downloadBlob(`${fileTitle}-${timestamp}.md`, new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+        downloadBlob(`${fileTitle}-${timestamp}.md`, new Blob([`${answer}\n`], { type: 'text/markdown;charset=utf-8' }));
         return;
       }
       if (format === 'word') {
-        const html = buildWordDocument(title, bodyContent);
+        const html = buildWordDocument(answer);
         downloadBlob(`${fileTitle}-${timestamp}.doc`, new Blob([html], { type: 'application/msword;charset=utf-8' }));
         return;
       }
-      openPrintablePdf(title, bodyContent);
+      openPrintablePdf(answer);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '导出失败');
     } finally {
-      setExportingFormat(undefined);
+      setExportingTarget(undefined);
     }
   };
 
@@ -796,16 +787,16 @@ export default function ChatWorkspace() {
                         { key: 'pdf', label: '导出为 PDF' },
                       ],
                       onClick: ({ key }) => {
-                        void exportConversationOutput(key as 'md' | 'word' | 'pdf');
+                        void exportAssistantOutput(item, key as 'md' | 'word' | 'pdf');
                       },
                     }}
                   >
-                    <Tooltip title="导出当前会话">
+                    <Tooltip title="导出当前回答">
                       <Button
                         size="small"
                         icon={<DownloadOutlined />}
-                        aria-label="导出当前会话"
-                        loading={Boolean(exportingFormat)}
+                        aria-label="导出当前回答"
+                        loading={exportingTarget?.messageId === item.id}
                       />
                     </Tooltip>
                   </Dropdown>
@@ -1080,23 +1071,6 @@ function formatExportTime(date: Date) {
   )}`;
 }
 
-function buildConversationMarkdown(title: string, items: ChatMessage[], includeTitle: boolean) {
-  const lines = includeTitle ? [`# ${title}`, '', `导出时间：${new Date().toLocaleString('zh-CN')}`, ''] : [];
-  if (!items.length) {
-    lines.push('（当前会话暂无消息）');
-    return lines.join('\n');
-  }
-  items.forEach((item) => {
-    lines.push(`## ${item.role === 'user' ? '用户' : '助手'} · ${formatShortTime(item.created_at)}`, '');
-    lines.push(item.content.trim() || '（空消息）');
-    if (item.attachments?.length) {
-      lines.push('', `附件：${item.attachments.map((file) => file.file_name).join('、')}`);
-    }
-    lines.push('');
-  });
-  return lines.join('\n').trimEnd() + '\n';
-}
-
 function downloadBlob(fileName: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -1108,15 +1082,14 @@ function downloadBlob(fileName: string, blob: Blob) {
   URL.revokeObjectURL(url);
 }
 
-function buildWordDocument(title: string, content: string) {
+function buildWordDocument(content: string) {
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(title)}</title>
+  <title>AI 回答</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; line-height: 1.72; color: #1f1f1f; }
-    h1 { font-size: 22px; margin: 0 0 22px; }
     h2 { font-size: 15px; margin: 22px 0 8px; color: #333; }
     p { margin: 0 0 12px; }
     table { border-collapse: collapse; width: 100%; }
@@ -1124,33 +1097,31 @@ function buildWordDocument(title: string, content: string) {
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(title)}</h1>
   ${markdownToHtml(content)}
 </body>
 </html>`;
 }
 
-function openPrintablePdf(title: string, content: string) {
+function openPrintablePdf(content: string) {
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
     message.warning('浏览器阻止了打印窗口，请允许弹窗后重试');
     return;
   }
+  printWindow.document.open();
   printWindow.document.write(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(title)}</title>
+  <title>AI 回答</title>
   <style>
     @page { margin: 22mm 18mm; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; line-height: 1.72; color: #1f1f1f; }
-    h1 { font-size: 22px; margin: 0 0 22px; }
     h2 { font-size: 15px; margin: 22px 0 8px; color: #333; }
     p { margin: 0 0 12px; }
   </style>
 </head>
 <body>
-  <h1>${escapeHtml(title)}</h1>
   ${markdownToHtml(content)}
   <script>window.onload = () => setTimeout(() => window.print(), 180);</script>
 </body>
