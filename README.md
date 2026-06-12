@@ -9,6 +9,7 @@
 - 基础服务：PostgreSQL、Redis、MinIO、Qdrant，OpenSearch 可选
 - 异步任务：Celery，MVP 默认 `PROCESS_DOCUMENTS_INLINE=true` 便于本地调试
 - 文件解析：默认 MinerU；旧轻量解析器仅保留为非默认兼容 provider
+- 检索：Qdrant dense embedding + PostgreSQL/SQLite BM25 关键词倒排索引 + RRF 融合
 - 模型：DeepSeek API、本地 multilingual-e5-small、学校模型 URL；未配置时自动使用 mock provider
 
 ## 文件解析方式
@@ -221,4 +222,4 @@ make lint
 - WSL 端口访问问题：确认 `make backend-dev` 和 `make frontend-dev` 使用 `--host 0.0.0.0`，Windows 侧访问 `localhost:5173`。
 - macOS 没有 Docker：运行 `make local-env`，跳过 `make dev-services`，用 SQLite 和 mock 模型先跑通。
 - 端口被占用：后端运行 `BACKEND_PORT=8001 make backend-dev`，前端运行 `FRONTEND_PORT=5174 make frontend-dev`。
-- OpenSearch 未启用：系统使用 PostgreSQL 文本 contains fallback keyword search，RAG 流程仍可跑通。
+- 关键词检索：PostgreSQL/SQLite 都会写入 BM25 倒排索引；已有文档在升级后需要重新上传或重新处理，才会生成新的 BM25 词项。

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -126,6 +126,29 @@ class DocumentChunk(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+
+
+class DocumentChunkKeywordStat(Base):
+    __tablename__ = "document_chunk_keyword_stats"
+
+    chunk_id: Mapped[str] = mapped_column(String(36), ForeignKey("document_chunks.id"), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id"), index=True)
+    kb_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class DocumentChunkTerm(Base):
+    __tablename__ = "document_chunk_terms"
+    __table_args__ = (
+        Index("ix_document_chunk_terms_term_chunk", "term", "chunk_id"),
+        Index("ix_document_chunk_terms_document_term", "document_id", "term"),
+    )
+
+    chunk_id: Mapped[str] = mapped_column(String(36), ForeignKey("document_chunks.id"), primary_key=True)
+    term: Mapped[str] = mapped_column(String(120), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(36), ForeignKey("documents.id"), index=True)
+    kb_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    tf: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class Conversation(Base, TimestampMixin):

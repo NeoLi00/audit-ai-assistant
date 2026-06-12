@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import math
 import re
+import unicodedata
+from collections import Counter
 
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
-from app.db.models import Document, DocumentChunk, KnowledgeBase, User
+from app.db.models import Document, DocumentChunk, DocumentChunkKeywordStat, DocumentChunkTerm, KnowledgeBase, User
 from app.services.indexing.vector_indexer import INDEXED_DOCUMENT_STATUSES
 
+try:
+    import jieba
+except ImportError:  # pragma: no cover - dependency fallback for old local envs
+    jieba = None
+
 FTS_TABLE = "document_chunk_fts"
+BM25_K1 = 1.5
+BM25_B = 0.75
 
 DOMAIN_KEYPHRASES = (
     "电子招标投标",
@@ -72,9 +82,23 @@ QUESTION_STOPWORDS = (
     "以及",
 )
 
+BM25_STOPWORDS = (
+    *QUESTION_STOPWORDS,
+    "请问",
+    "请",
+    "吗",
+    "呢",
+    "的",
+    "了",
+    "为",
+)
+
 
 class KeywordIndexer:
     def ensure_schema(self, db: Session) -> None:
+        bind = db.get_bind()
+        DocumentChunkKeywordStat.__table__.create(bind, checkfirst=True)
+        DocumentChunkTerm.__table__.create(bind, checkfirst=True)
         if db.bind and db.bind.dialect.name != "sqlite":
             return
         try:
@@ -100,23 +124,31 @@ class KeywordIndexer:
     def upsert(self, db: Session, chunks: list[DocumentChunk]) -> None:
         if not chunks:
             return
-        if db.bind and db.bind.dialect.name != "sqlite":
-            return
         self.ensure_schema(db)
         document_ids = {chunk.document_id for chunk in chunks}
         for document_id in document_ids:
-            db.execute(text(f"delete from {FTS_TABLE} where document_id = :document_id"), {"document_id": document_id})
+            self._delete_bm25_document(db, document_id)
+            if db.bind and db.bind.dialect.name == "sqlite":
+                db.execute(
+                    text(f"delete from {FTS_TABLE} where document_id = :document_id"),
+                    {"document_id": document_id},
+                )
         for chunk in chunks:
-            db.execute(
-                text(f"insert into {FTS_TABLE}(chunk_id, document_id, text) values (:chunk_id, :document_id, :text)"),
-                {"chunk_id": chunk.id, "document_id": chunk.document_id, "text": chunk.text},
-            )
+            self._upsert_bm25_chunk(db, chunk)
+            if db.bind and db.bind.dialect.name == "sqlite":
+                db.execute(
+                    text(
+                        f"insert into {FTS_TABLE}(chunk_id, document_id, text) "
+                        "values (:chunk_id, :document_id, :text)"
+                    ),
+                    {"chunk_id": chunk.id, "document_id": chunk.document_id, "text": chunk.text},
+                )
 
     def delete_document(self, db: Session, document_id: str) -> None:
-        if db.bind and db.bind.dialect.name != "sqlite":
-            return
         self.ensure_schema(db)
-        db.execute(text(f"delete from {FTS_TABLE} where document_id = :document_id"), {"document_id": document_id})
+        self._delete_bm25_document(db, document_id)
+        if db.bind and db.bind.dialect.name == "sqlite":
+            db.execute(text(f"delete from {FTS_TABLE} where document_id = :document_id"), {"document_id": document_id})
 
     def delete_kb(self, db: Session, kb_id: str) -> None:
         document_ids = [item[0] for item in db.query(Document.id).filter(Document.kb_id == kb_id).all()]
@@ -145,11 +177,44 @@ class KeywordIndexer:
         if len(results) < top_k:
             seen = {item["chunk_id"] for item in results}
             results.extend(
-                item
-                for item in self._contains_search(db, query, visible_ids, top_k)
-                if item["chunk_id"] not in seen
+                item for item in self._bm25_search(db, query, visible_ids, top_k) if item["chunk_id"] not in seen
+            )
+        if len(results) < top_k:
+            seen = {item["chunk_id"] for item in results}
+            results.extend(
+                item for item in self._contains_search(db, query, visible_ids, top_k) if item["chunk_id"] not in seen
             )
         return results[:top_k]
+
+    def _upsert_bm25_chunk(self, db: Session, chunk: DocumentChunk) -> None:
+        term_counts = Counter(bm25_tokenize(chunk.text))
+        token_count = sum(term_counts.values())
+        db.add(
+            DocumentChunkKeywordStat(
+                chunk_id=chunk.id,
+                document_id=chunk.document_id,
+                kb_id=chunk.kb_id,
+                token_count=token_count,
+            )
+        )
+        for term, tf in term_counts.items():
+            db.add(
+                DocumentChunkTerm(
+                    chunk_id=chunk.id,
+                    term=term,
+                    document_id=chunk.document_id,
+                    kb_id=chunk.kb_id,
+                    tf=tf,
+                )
+            )
+
+    def _delete_bm25_document(self, db: Session, document_id: str) -> None:
+        db.query(DocumentChunkTerm).filter(DocumentChunkTerm.document_id == document_id).delete(
+            synchronize_session=False
+        )
+        db.query(DocumentChunkKeywordStat).filter(DocumentChunkKeywordStat.document_id == document_id).delete(
+            synchronize_session=False
+        )
 
     def _visible_chunk_ids(
         self,
@@ -219,6 +284,58 @@ class KeywordIndexer:
             if len(results) >= top_k:
                 break
         return results
+
+    def _bm25_search(self, db: Session, query: str, visible_ids: set[str], top_k: int) -> list[dict]:
+        query_terms = Counter(bm25_tokenize(query))
+        if not query_terms:
+            return []
+        self.ensure_schema(db)
+        stats = (
+            db.query(DocumentChunkKeywordStat)
+            .filter(DocumentChunkKeywordStat.chunk_id.in_(visible_ids))
+            .all()
+        )
+        if not stats:
+            return []
+        stats_by_chunk = {item.chunk_id: item for item in stats}
+        corpus_size = len(stats_by_chunk)
+        avgdl = sum(max(1, item.token_count) for item in stats) / max(1, corpus_size)
+        terms = list(query_terms)
+        rows = (
+            db.query(DocumentChunkTerm)
+            .filter(DocumentChunkTerm.chunk_id.in_(visible_ids), DocumentChunkTerm.term.in_(terms))
+            .all()
+        )
+        if not rows:
+            return []
+
+        doc_freqs: Counter[str] = Counter()
+        for row in rows:
+            doc_freqs[row.term] += 1
+
+        scores: dict[str, float] = {}
+        for row in rows:
+            stat = stats_by_chunk.get(row.chunk_id)
+            if not stat:
+                continue
+            doc_length = max(1, stat.token_count)
+            df = max(1, doc_freqs[row.term])
+            idf = math.log(1.0 + (corpus_size - df + 0.5) / (df + 0.5))
+            denominator = row.tf + BM25_K1 * (1.0 - BM25_B + BM25_B * doc_length / max(avgdl, 1.0))
+            term_score = idf * ((row.tf * (BM25_K1 + 1.0)) / denominator)
+            scores[row.chunk_id] = scores.get(row.chunk_id, 0.0) + term_score * query_terms[row.term]
+
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:top_k]
+        return [
+            {
+                "chunk_id": chunk_id,
+                "document_id": stats_by_chunk[chunk_id].document_id,
+                "score": float(score),
+                "raw_score": float(score),
+                "source": "keyword_bm25",
+            }
+            for chunk_id, score in ranked
+        ]
 
     def _contains_search(self, db: Session, query: str, visible_ids: set[str], top_k: int) -> list[dict]:
         terms = _terms(query)
@@ -300,6 +417,42 @@ def _fts_query(query: str) -> str:
 
 def _escape_fts_term(term: str) -> str:
     return term.replace('"', " ")
+
+
+def bm25_tokenize(text_value: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKC", text_value or "").lower()
+    for stopword in BM25_STOPWORDS:
+        normalized = normalized.replace(stopword, " ")
+
+    terms: list[str] = []
+    terms.extend(re.findall(r"[a-z]+[a-z0-9_-]*|\d+(?:\.\d+)?%?", normalized))
+
+    if jieba is not None:
+        terms.extend(
+            token.strip()
+            for token in jieba.cut(normalized, cut_all=False)
+            if _usable_bm25_term(token)
+        )
+
+    for cjk_run in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]+", normalized):
+        if 2 <= len(cjk_run) <= 12:
+            terms.append(cjk_run)
+        for n in (2, 3):
+            if len(cjk_run) >= n:
+                terms.extend(cjk_run[index : index + n] for index in range(0, len(cjk_run) - n + 1))
+
+    return [term for term in terms if _usable_bm25_term(term)]
+
+
+def _usable_bm25_term(term: str) -> bool:
+    term = (term or "").strip()
+    if not term or len(term) > 120:
+        return False
+    if term in BM25_STOPWORDS:
+        return False
+    if len(term) == 1 and not re.fullmatch(r"\d", term):
+        return False
+    return bool(re.search(r"[a-z0-9%_\-\u3400-\u4dbf\u4e00-\u9fff]", term))
 
 
 keyword_indexer = KeywordIndexer()
