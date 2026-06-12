@@ -100,6 +100,9 @@ def _kb_dict(kb: KnowledgeBase) -> dict:
 
 
 def _doc_dict(doc: Document) -> dict:
+    metadata = doc.metadata_json or {}
+    parser_detail = metadata.get("parser_detail") or _document_parser_detail(doc)
+    progress = progress_for_status(doc.status, metadata)
     return {
         "id": doc.id,
         "kb_id": doc.kb_id,
@@ -116,8 +119,8 @@ def _doc_dict(doc: Document) -> dict:
         "error_message": doc.error_message,
         "status_message": _document_status_message(doc),
         "parser_provider": get_settings().document_parser_provider,
-        "parser_detail": _document_parser_detail(doc),
-        **progress_for_status(doc.status),
+        "parser_detail": parser_detail,
+        **progress,
         "uploaded_by": doc.uploaded_by,
         "created_at": doc.created_at.isoformat(),
     }
@@ -144,11 +147,14 @@ def _document_status_message(doc: Document) -> str:
 
 
 def _document_parser_detail(doc: Document) -> str:
-    provider = get_settings().document_parser_provider
+    settings = get_settings()
+    provider = settings.document_parser_provider
     if provider == "mineru":
-        timeout = int(get_settings().mineru_timeout or 0)
+        timeout = int(settings.mineru_timeout or 0)
         timeout_text = "无后端超时限制" if timeout <= 0 else f"后端超时 {timeout} 秒"
-        return f"文件类型：{doc.file_ext or 'unknown'}；{MINERU_PARSER_DETAIL}；{timeout_text}。"
+        batch_size = int(settings.mineru_page_batch_size or 0)
+        batch_text = f"PDF 每 {batch_size} 页分段解析" if batch_size > 0 else "PDF 不分段解析"
+        return f"文件类型：{doc.file_ext or 'unknown'}；{MINERU_PARSER_DETAIL}；{timeout_text}；{batch_text}。"
     return f"文件类型：{doc.file_ext or 'unknown'}；解析器：{provider}。"
 
 

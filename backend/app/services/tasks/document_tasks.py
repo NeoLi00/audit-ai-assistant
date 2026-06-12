@@ -51,10 +51,30 @@ async def process_document_async(db: Session, document_id: str) -> dict:
     progress_metadata = _parser_progress_metadata(parser, path)
     document.status = "parsing"
     document.error_message = progress_metadata.get("status_message", "")
+    document.metadata_json = {
+        **(document.metadata_json or {}),
+        **progress_metadata,
+        "local_path": str(path),
+    }
     db.commit()
 
-    parse_result = parser.parse(path)
+    def update_parse_progress(metadata: dict) -> None:
+        document.metadata_json = {
+            **(document.metadata_json or {}),
+            **metadata,
+            "local_path": str(path),
+        }
+        document.error_message = str(metadata.get("status_message") or document.error_message or "")
+        db.commit()
+
+    parse_result = parser.parse(path, progress_callback=update_parse_progress)
     document.error_message = parse_result.error_message
+    document.metadata_json = {
+        **(document.metadata_json or {}),
+        **parse_result.metadata,
+        "error_message": parse_result.error_message,
+        "local_path": str(path),
+    }
     if parse_result.status == "failed":
         document.status = "failed"
         db.commit()
@@ -85,6 +105,11 @@ async def process_document_async(db: Session, document_id: str) -> dict:
 
     document.status = "chunking"
     document.error_message = "解析完成，正在进行结构化切分。"
+    document.metadata_json = {
+        **(document.metadata_json or {}),
+        **progress_for_status("chunking"),
+        "status_message": document.error_message,
+    }
     db.flush()
     chunk_inputs = [
         {
@@ -129,6 +154,11 @@ async def process_document_async(db: Session, document_id: str) -> dict:
     if chunk_rows:
         document.status = "embedding"
         document.error_message = "切分完成，正在生成 embedding 并写入向量/关键词索引。"
+        document.metadata_json = {
+            **(document.metadata_json or {}),
+            **progress_for_status("embedding"),
+            "status_message": document.error_message,
+        }
         db.commit()
         texts = [chunk.text for chunk in chunk_rows]
         vectors = await get_embedding_client().embed_texts(texts)
@@ -138,6 +168,19 @@ async def process_document_async(db: Session, document_id: str) -> dict:
     document.status = "need_review" if parse_result.status == "need_review" else "indexed"
     if document.status == "indexed":
         document.error_message = ""
+        document.metadata_json = {
+            **(document.metadata_json or {}),
+            **progress_for_status("indexed"),
+            "status_message": "已完成解析、切分和索引。",
+        }
+    else:
+        document.error_message = parse_result.error_message
+        document.metadata_json = {
+            **(document.metadata_json or {}),
+            **progress_for_status("need_review"),
+            "error_message": parse_result.error_message,
+            "status_message": "解析完成但需要人工复核。",
+        }
     db.commit()
     return {"status": document.status, "chunks": len(chunk_rows)}
 

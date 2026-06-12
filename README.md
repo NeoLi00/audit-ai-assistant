@@ -20,6 +20,8 @@
 - `.xls` 会标记 `need_review`，建议先转为 `.xlsx` 后上传。
 - 如果本机没有安装 `mineru` 命令，文档会标记 `need_review` 并提示安装 MinerU，不会悄悄回退到轻量解析。
 - `MINERU_TIMEOUT=0` 表示后端不主动超时终止 MinerU；解析中会在前端展示版面分析、表格结构识别、图片/扫描件 OCR 等状态提示。
+- PDF 默认按 `MINERU_PAGE_BATCH_SIZE=10` 页一段调用 MinerU。页段 Markdown 会按文件 hash 缓存在
+  `.local_storage/mineru-output/pdf-batches/`，后续重新解析同一文件会跳过已完成页段；如果某一段失败，前面已完成页段仍会落库、切 chunk、生成 embedding，文档最终标记 `need_review` 并保留失败页段提示。
 
 安装 MinerU：
 

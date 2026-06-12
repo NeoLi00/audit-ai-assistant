@@ -1,4 +1,7 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
+
+ProgressCallback = Callable[[dict], None]
 
 
 @dataclass
@@ -20,4 +23,3 @@ class ParseResult:
     text: str = ""
     error_message: str = ""
     metadata: dict = field(default_factory=dict)
-

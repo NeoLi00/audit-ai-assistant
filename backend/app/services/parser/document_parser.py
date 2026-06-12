@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.core.config import Settings, get_settings
-from app.services.parser.base import ParseResult
+from app.services.parser.base import ParseResult, ProgressCallback
 from app.services.parser.excel_parser import ExcelParser
 from app.services.parser.image_ocr import ImageOCRParser
 from app.services.parser.mineru_parser import MinerUParser
@@ -16,11 +16,11 @@ class DocumentParser:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    def parse(self, path: Path) -> ParseResult:
+    def parse(self, path: Path, progress_callback: ProgressCallback | None = None) -> ParseResult:
         ext = path.suffix.lower()
         if self.settings.document_parser_provider == "mineru":
             if ext in SUPPORTED_EXTENSIONS:
-                return MinerUParser(settings=self.settings).parse(path)
+                return MinerUParser(settings=self.settings).parse(path, progress_callback=progress_callback)
             return ParseResult(status="failed", error_message="当前格式不支持，请上传Word/Excel/PDF/图片文件")
 
         if ext in {".doc", ".docx"}:

@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     mineru_backend: str = "pipeline"
     mineru_output_dir: Path = Path(".local_storage/mineru-output")
     mineru_timeout: int = 0
+    mineru_page_batch_size: int = 10
 
     local_e5_model: str = "intfloat/multilingual-e5-small"
     local_e5_base_url: str = "http://127.0.0.1:18080/v1"

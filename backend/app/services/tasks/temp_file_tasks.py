@@ -21,7 +21,15 @@ def process_temp_file_in_background(temp_file_id: str) -> dict:
         }
         db.commit()
 
-        parse_result = parser.parse(path)
+        def update_parse_progress(metadata: dict) -> None:
+            temp_file.metadata_json = {
+                **(temp_file.metadata_json or {}),
+                **metadata,
+                "local_path": str(path),
+            }
+            db.commit()
+
+        parse_result = parser.parse(path, progress_callback=update_parse_progress)
         temp_file.status = "ready" if parse_result.status == "ready" else parse_result.status
         temp_file.parsed_text = parse_result.text
         temp_file.metadata_json = {

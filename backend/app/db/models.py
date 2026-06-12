@@ -73,6 +73,7 @@ class Document(Base, TimestampMixin):
     is_current_version: Mapped[bool] = mapped_column(Boolean, default=True)
     status: Mapped[str] = mapped_column(String(40), default="uploaded", index=True)
     error_message: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict)
     uploaded_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
 
     knowledge_base: Mapped[KnowledgeBase | None] = relationship(back_populates="documents")
